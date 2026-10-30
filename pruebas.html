@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pruebas de la lógica de cálculo</title>
+  <style>
+    body { font-family: Arial, sans-serif; max-width: 860px; margin: 24px auto; padding: 0 16px; color: #1f2933; }
+    h1 { font-size: 22px; margin-bottom: 4px; }
+    p.nota { color: #52606d; margin-top: 0; }
+    #resumen { font-size: 18px; font-weight: bold; padding: 12px 16px; border-radius: 6px; margin: 16px 0; }
+    #resumen.bien { background: #d9f2e0; color: #11602c; }
+    #resumen.mal { background: #fbdada; color: #8a1c1c; }
+    table { border-collapse: collapse; width: 100%; font-size: 14px; }
+    th, td { border: 1px solid #cbd2d9; padding: 6px 8px; text-align: left; }
+    th { background: #1f4e78; color: #fff; }
+    tr.ok td:last-child { color: #11602c; font-weight: bold; }
+    tr.falla { background: #fbdada; }
+    tr.falla td:last-child { color: #8a1c1c; font-weight: bold; }
+  </style>
+</head>
+<body>
+  <h1>Pruebas de la lógica de cálculo</h1>
+  <p class="nota">Cada fila compara el resultado calculado a mano (esperado) con el que da el código (obtenido).</p>
+  <div id="resumen"></div>
+  <table>
+    <thead><tr><th>Prueba</th><th>Qué comprueba</th><th>Esperado</th><th>Obtenido</th><th>Resultado</th></tr></thead>
+    <tbody id="filas"></tbody>
+  </table>
+
+  <script src="logica.js"></script>
+  <script src="pruebas.js"></script>
+  <script>
+    const resultados = ejecutarPruebas();
+    const filas = document.getElementById("filas");
+    let correctas = 0;
+    resultados.forEach(function (r) {
+      if (r.ok) correctas += 1;
+      const tr = document.createElement("tr");
+      tr.className = r.ok ? "ok" : "falla";
+      [r.id, r.descripcion, String(r.esperado), String(r.obtenido), r.ok ? "OK" : "FALLA"].forEach(function (texto) {
+        const td = document.createElement("td");
+        td.textContent = texto;
+        tr.appendChild(td);
+      });
+      filas.appendChild(tr);
+    });
+    const resumen = document.getElementById("resumen");
+    resumen.textContent = correctas + " de " + resultados.length + " pruebas correctas";
+    resumen.className = correctas === resultados.length ? "bien" : "mal";
+  </script>
+</body>
+</html>

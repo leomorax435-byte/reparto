@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pruebas del guardado del rancho</title>
+  <style>
+    body { font-family: Arial, sans-serif; max-width: 900px; margin: 24px auto; padding: 0 16px; color: #1f2933; }
+    h1 { font-size: 22px; margin-bottom: 4px; }
+    p.nota { color: #52606d; margin-top: 0; }
+    #resumen { font-size: 18px; font-weight: bold; padding: 12px 16px; border-radius: 6px; margin: 16px 0; }
+    #resumen.bien { background: #d9f2e0; color: #11602c; }
+    #resumen.mal { background: #fbdada; color: #8a1c1c; }
+    table { border-collapse: collapse; width: 100%; font-size: 14px; }
+    th, td { border: 1px solid #cbd2d9; padding: 6px 8px; text-align: left; }
+    th { background: #1f4e78; color: #fff; }
+    tr.ok td:last-child { color: #11602c; font-weight: bold; }
+    tr.falla { background: #fbdada; }
+    tr.falla td:last-child { color: #8a1c1c; font-weight: bold; }
+  </style>
+</head>
+<body>
+  <h1>Pruebas del guardado del rancho</h1>
+  <p class="nota">Personas, fiados, cierre del rancho, respaldo y exportación. Usan una memoria de mentira: no tocan tus datos reales.</p>
+  <div id="resumen"></div>
+  <table>
+    <thead><tr><th>Prueba</th><th>Qué comprueba</th><th>Esperado</th><th>Obtenido</th><th>Resultado</th></tr></thead>
+    <tbody id="filas"></tbody>
+  </table>
+
+  <script src="logica.js"></script>
+  <script src="logica_rancho.js"></script>
+  <script src="logica_cuentas.js"></script>
+  <script src="almacenamiento.js"></script>
+  <script>
+    // ===== MARCA-INICIO-PRUEBAS =====
+    function MemoriaFalsa() {
+      this.datos = {};
+      this.getItem = function (k) { return Object.prototype.hasOwnProperty.call(this.datos, k) ? this.datos[k] : null; };
+      this.setItem = function (k, v) { this.datos[k] = String(v); };
+      this.removeItem = function (k) { delete this.datos[k]; };
+      this.key = function (i) { return Object.keys(this.datos)[i] || null; };
+      Object.defineProperty(this, "length", { get: function () { return Object.keys(this.datos).length; } });
+    }
+    function MemoriaQueFallaEn(n) {
+      MemoriaFalsa.call(this);
+      let escrituras = 0;
+      const original = this.setItem;
+      this.activarFallo = false;
+      this.setItem = function (k, v) {
+        if (this.activarFallo) { escrituras += 1; if (escrituras === n) throw new Error("memoria llena"); }
+        original.call(this, k, v);
+      };
+    }
+    function lanza(f) { try { f(); return false; } catch (e) { return true; } }
+    function mensaje(f) { try { f(); return ""; } catch (e) { return e.message; } }
+    function clonar(o) { return JSON.parse(JSON.stringify(o)); }
+
+    const RESULTADOS = [];
+    function prueba(id, descripcion, esperado, obtenido) {
+      let ok;
+      if (typeof esperado === "number") ok = typeof obtenido === "number" && Math.abs(esperado - obtenido) < 0.005;
+      else ok = esperado === obtenido;
+      RESULTADOS.push({ id: id, descripcion: descripcion, esperado: esperado, obtenido: obtenido, ok: ok });
+    }
+
+    // Reparto de tiendas con 3 kg fríos (Tienda 1: 30/2, Tienda 2: 25/1), opcionalmente cerrado
+    function armarReparto(fecha, cerrar) {
+      const r = Almacen.nuevoReparto(fecha, Almacen.obtenerTiendas());
+      r.lineas[0].entregados = "30"; r.lineas[0].sobrantes = "2";
+      r.lineas[1].entregados = "25"; r.lineas[1].sobrantes = "1";
+      Almacen.guardarReparto(r);
+      if (cerrar) Almacen.cerrarReparto(fecha);
+    }
+    // El rancho del ejemplo de la conversación: dinero $1,079, fiado por cobrar $437
+    function armarRanchoEjemplo(fecha) {
+      Almacen.agregarPersona("María", 12);
+      Almacen.agregarPersona("Pedro", 13);
+      Almacen.agregarPersona("Juan", 12);
+      Almacen.agregarPersona("Ana", 13);
+      const r = Almacen.nuevoRancho(fecha);
+      r.caliente = { llevados: "65", regresan: "0" };
+      r.fria = { extra: "5", regresan: "1", contadoA: "3", contadoB: "2" };
+      r.masa = { llevados: "10", regresan: "0" };
+      r.fiados = [
+        { id: 1, personaId: 1, nombre: "María", producto: "caliente", kg: "12", precio: 20 },
+        { id: 2, personaId: 2, nombre: "Pedro", producto: "caliente", kg: "8", precio: 20 },
+        { id: 3, personaId: 3, nombre: "Juan", producto: "fria", kg: "2", precio: 12 },
+        { id: 4, personaId: 4, nombre: "Ana", producto: "masa", kg: "1", precio: 13 }
+      ];
+      Almacen.guardarRancho(r);
+      return r;
+    }
+    function ejemploCompleto(fecha) {
+      const mem = new MemoriaFalsa();
+      Almacen.usarBackend(mem);
+      armarReparto(fecha, true);
+      armarRanchoEjemplo(fecha);
+      Almacen.cerrarRancho(fecha);
+      return mem;
+    }
+
+    function ejecutarPruebasRanchoGuardado() {
+      RESULTADOS.length = 0;
+
+      // ================= PERSONAS =================
+      Almacen.usarBackend(new MemoriaFalsa());
+      prueba("PE1", "Al inicio no hay personas (no se inventan)", 0, Almacen.obtenerPersonas().length);
+      const maria = Almacen.agregarPersona("  María  ", "12");
+      prueba("PE2", "Agregar persona: nombre limpio", "María", maria.nombre);
+      prueba("PE3", "Agregar persona: recibe el número 1", 1, maria.id);
+      prueba("PE4", "Agregar persona: precio de fría guardado", 12, maria.precioFria);
+      prueba("PE5", "No acepta nombre repetido (ignora mayúsculas)", true, lanza(function () { Almacen.agregarPersona("maría", 13); }));
+      prueba("PE6", "No acepta precio con coma", true, lanza(function () { Almacen.agregarPersona("Otro", "12,5"); }));
+      prueba("PE7", "No acepta precio 0", true, lanza(function () { Almacen.agregarPersona("Otro", 0); }));
+      prueba("PE8", "No acepta nombre vacío", true, lanza(function () { Almacen.agregarPersona("", 12); }));
+      Almacen.editarPersona(1, "María", 13);
+      prueba("PE9", "Editar persona: cambia su precio de fría", 13, Almacen.obtenerPersonas()[0].precioFria);
+      Almacen.establecerActivaPersona(1, false);
+      prueba("PE10", "Desactivar: la persona sigue en la lista, inactiva", false, Almacen.obtenerPersonas()[0].activa);
+      prueba("PE11", "Un número de persona no se reutiliza", 2, Almacen.agregarPersona("Pedro", 13).id);
+
+      // ================= PRECIOS DEL RANCHO =================
+      Almacen.usarBackend(new MemoriaFalsa());
+      const pd = Almacen.obtenerPreciosRancho();
+      prueba("PR1", "Precios iniciales: caliente $20", 20, pd.caliente);
+      prueba("PR2", "Precios iniciales: masa $13", 13, pd.masa);
+      prueba("PR3", "Precios iniciales: fría A $12 y B $13", "12-13", pd.friaA + "-" + pd.friaB);
+      Almacen.guardarPreciosRancho({ caliente: 22, masa: 14, friaA: 12, friaB: 13 });
+      prueba("PR4", "Guardar precios: se leen los nuevos", 22, Almacen.obtenerPreciosRancho().caliente);
+      prueba("PR5", "Precio inválido se rechaza", true, lanza(function () { Almacen.guardarPreciosRancho({ caliente: -1, masa: 14, friaA: 12, friaB: 13 }); }));
+      prueba("PR6", "Tras el rechazo, los precios no cambiaron", 22, Almacen.obtenerPreciosRancho().caliente);
+
+      // ================= RANCHO DEL DÍA =================
+      const rn = Almacen.nuevoRancho("2026-10-20");
+      prueba("RA1", "Rancho nuevo copia los precios actuales (caliente $22)", 22, rn.precios.caliente);
+      prueba("RA2", "Rancho nuevo todavía no existe en el archivero", null, Almacen.obtenerRancho("2026-10-20"));
+      rn.caliente.llevados = "30"; rn.caliente.regresan = "0";
+      prueba("RA3", "Guardar un rancho devuelve confirmación", true, Almacen.guardarRancho(rn));
+      prueba("RA4", "Se lee lo guardado", "30", Almacen.obtenerRancho("2026-10-20").caliente.llevados);
+      Almacen.guardarRancho(rn);
+      prueba("RA5", "Guardar el mismo día varias veces no duplica", 1, Almacen.listarFechasRancho().length);
+      const nuevosPrecios = { caliente: 25, masa: 14, friaA: 12, friaB: 13 };
+      prueba("RA6", "Rancho CON datos conserva sus precios", false, Almacen.sincronizarRancho(rn, nuevosPrecios));
+      prueba("RA7", "…y su precio sigue en $22", 22, rn.precios.caliente);
+      const vacio = Almacen.nuevoRancho("2026-10-21");
+      prueba("RA8", "Rancho SIN datos toma los precios nuevos", true, Almacen.sincronizarRancho(vacio, nuevosPrecios));
+      prueba("RA9", "…y su precio queda en $25", 25, vacio.precios.caliente);
+
+      // ================= FRÍA DE TIENDAS =================
+      Almacen.usarBackend(new MemoriaFalsa());
+      const f0 = Almacen.friaDeTiendas("2026-10-20");
+      prueba("FT1", "Sin reparto ese día: 0 kg y cifra definitiva", "0-true", f0.kg + "-" + f0.cerrado);
+      armarReparto("2026-10-20", false);
+      const f1 = Almacen.friaDeTiendas("2026-10-20");
+      prueba("FT2", "Reparto abierto con datos: 3 kg, cifra NO definitiva", "3-false", f1.kg + "-" + f1.cerrado);
+      Almacen.cerrarReparto("2026-10-20");
+      const f2 = Almacen.friaDeTiendas("2026-10-20");
+      prueba("FT3", "Reparto cerrado: 3 kg, cifra definitiva", "3-true", f2.kg + "-" + f2.cerrado);
+      const vac = Almacen.nuevoReparto("2026-10-21", Almacen.obtenerTiendas());
+      Almacen.guardarReparto(vac);
+      prueba("FT4", "Reparto abierto SIN datos cuenta como 0", "0-true", Almacen.friaDeTiendas("2026-10-21").kg + "-" + Almacen.friaDeTiendas("2026-10-21").cerrado);
+
+      // ================= CERRAR EL RANCHO =================
+      Almacen.usarBackend(new MemoriaFalsa());
+      armarReparto("2026-10-20", false);
+      armarRanchoEjemplo("2026-10-20");
+      prueba("CI1", "No cierra el rancho si el reparto de tiendas sigue abierto", true, lanza(function () { Almacen.cerrarRancho("2026-10-20"); }));
+      prueba("CI2", "…y el mensaje explica por qué", true, mensaje(function () { Almacen.cerrarRancho("2026-10-20"); }).indexOf("cierra el reparto") >= 0);
+      Almacen.cerrarReparto("2026-10-20");
+      Almacen.cerrarRancho("2026-10-20");
+      const cerrado = Almacen.obtenerRancho("2026-10-20");
+      prueba("CI3", "Con el reparto cerrado, el rancho sí se cierra", "cerrado", cerrado.estado);
+      prueba("CI4", "Al cerrar guarda la fría de tiendas del día (3 kg)", 3, cerrado.friaDeTiendas);
+      prueba("CI5", "Dinero esperado del rancho: $1,079", 1079, Almacen.resumenRancho(cerrado).dineroRancho);
+      prueba("CI6", "Fiado por cobrar: $437", 437, Almacen.resumenRancho(cerrado).fiadoPorCobrar);
+      const intento = Almacen.obtenerRancho("2026-10-20");
+      intento.caliente.llevados = "99";
+      prueba("CI7", "Un rancho cerrado no se puede modificar", true, lanza(function () { Almacen.guardarRancho(intento); }));
+      prueba("CI8", "Tras el intento el dato guardado no cambió", "65", Almacen.obtenerRancho("2026-10-20").caliente.llevados);
+      prueba("CI9", "No se puede reabrir el reparto mientras el rancho está cerrado", true, lanza(function () { Almacen.reabrirReparto("2026-10-20"); }));
+      Almacen.reabrirRancho("2026-10-20");
+      prueba("CI10", "Reabrir el rancho lo deja abierto", "abierto", Almacen.obtenerRancho("2026-10-20").estado);
+      prueba("CI11", "…y olvida la fría guardada", null, Almacen.obtenerRancho("2026-10-20").friaDeTiendas);
+      Almacen.reabrirReparto("2026-10-20");
+      prueba("CI12", "Con el rancho abierto, el reparto sí se puede reabrir", "abierto", Almacen.obtenerReparto("2026-10-20").estado);
+
+      // Rancho sin datos no se cierra
+      Almacen.usarBackend(new MemoriaFalsa());
+      Almacen.guardarRancho(Almacen.nuevoRancho("2026-10-22"));
+      prueba("CI13", "No cierra un rancho sin datos", true, lanza(function () { Almacen.cerrarRancho("2026-10-22"); }));
+      // Rancho con error no se cierra
+      const malo = Almacen.nuevoRancho("2026-10-23");
+      malo.caliente.llevados = "10";   // falta "regresan"
+      Almacen.guardarRancho(malo);
+      prueba("CI14", "No cierra un rancho con errores", true, lanza(function () { Almacen.cerrarRancho("2026-10-23"); }));
+
+      // La fría guardada manda aunque el reparto cambie después
+      ejemploCompleto("2026-10-20");
+      prueba("CI15", "Rancho cerrado usa su fría guardada (3 kg)", 3, Almacen.friaUsada(Almacen.obtenerRancho("2026-10-20")));
+
+      // ================= FIADOS POR PERSONA =================
+      ejemploCompleto("2026-10-20");
+      armarRepartoSinFria("2026-10-21");
+      function armarRepartoSinFria(f) {
+        const r = Almacen.nuevoReparto(f, Almacen.obtenerTiendas());
+        r.lineas[0].entregados = "10"; r.lineas[0].sobrantes = "0";
+        Almacen.guardarReparto(r); Almacen.cerrarReparto(f);
+      }
+      const r2 = Almacen.nuevoRancho("2026-10-21");
+      r2.caliente = { llevados: "20", regresan: "0" };
+      r2.fiados = [
+        { id: 1, personaId: 1, nombre: "María", producto: "caliente", kg: "5", precio: 20 },
+        { id: 2, personaId: 1, nombre: "María", producto: "masa", kg: "0", precio: 13 }   // inválido: kg 0
+      ];
+      Almacen.guardarRancho(r2);
+      const fp = Almacen.fiadosPorPersona();
+      const maria2 = fp.filter(function (p) { return p.nombre === "María"; })[0];
+      prueba("FP1", "Hay 4 personas con fiados", 4, fp.length);
+      prueba("FP2", "María: 2 fiados válidos (12 kg + 5 kg de caliente)", 17, maria2.kgPorProducto.caliente);
+      prueba("FP3", "María: valor total fiado ($240 + $100)", 340, maria2.totalValor);
+      prueba("FP4", "El fiado inválido (0 kg) no cuenta", 2, maria2.lineas.length);
+      prueba("FP5", "Lo más reciente va primero", "2026-10-21", maria2.lineas[0].fecha);
+      Almacen.editarPersona(1, "María López", 12);
+      prueba("FP6", "Si se renombra la persona, el historial usa el nombre actual", "María López",
+        Almacen.fiadosPorPersona().filter(function (p) { return p.personaId === 1; })[0].nombre);
+
+      // ================= RESPALDO VERSIÓN 2 =================
+      const mem = ejemploCompleto("2026-10-20");
+      const resp = Almacen.exportarTodo();
+      prueba("B1", "Respaldo: versión 4", 4, resp.version);
+      prueba("B2", "Respaldo: trae las 4 personas", 4, resp.personas.length);
+      prueba("B3", "Respaldo: trae el rancho cerrado", "cerrado", resp.ranchos["2026-10-20"].estado);
+      prueba("B4", "Respaldo: trae los precios del rancho", 20, resp.preciosRancho.caliente);
+      const texto = JSON.stringify(resp);
+
+      Almacen.usarBackend(new MemoriaFalsa());
+      const res = Almacen.restaurarTodo(JSON.parse(texto));
+      prueba("B5", "Restaurar informa 1 rancho y 4 personas", "1-4", res.ranchos + "-" + res.personas);
+      prueba("B6", "Restaurar: dinero del rancho igual ($1,079)", 1079, Almacen.resumenRancho(Almacen.obtenerRancho("2026-10-20")).dineroRancho);
+      prueba("B7", "Restaurar: fiado por cobrar igual ($437)", 437, Almacen.resumenRancho(Almacen.obtenerRancho("2026-10-20")).fiadoPorCobrar);
+      prueba("B8", "Restaurar: el rancho sigue cerrado", "cerrado", Almacen.obtenerRancho("2026-10-20").estado);
+      prueba("B9", "Restaurar: las personas vuelven", 4, Almacen.obtenerPersonas().length);
+      prueba("B10", "Restaurar: el reparto de tiendas también ($908)", 908, Almacen.resumenDe(Almacen.obtenerReparto("2026-10-20")).total);
+
+      // Restaurar reemplaza
+      const mem2 = new MemoriaFalsa(); Almacen.usarBackend(mem2);
+      Almacen.agregarPersona("Otra persona", 12);
+      Almacen.guardarRancho(Object.assign(Almacen.nuevoRancho("2026-01-05"), {}));
+      const rr = Almacen.nuevoRancho("2026-01-06"); rr.caliente = { llevados: "5", regresan: "0" }; Almacen.guardarRancho(rr);
+      Almacen.restaurarTodo(JSON.parse(texto));
+      prueba("B11", "Restaurar reemplaza: un rancho que no estaba en el respaldo desaparece", null, Almacen.obtenerRancho("2026-01-06"));
+      prueba("B12", "Restaurar reemplaza: la persona que no estaba desaparece", 4, Almacen.obtenerPersonas().length);
+
+      // Respaldo versión 1 (anterior al rancho)
+      const v1 = { aplicacion: "tortilleria", version: 1, exportadoEn: "2026-10-01T00:00:00Z", tiendas: Almacen.tiendasDeEjemplo(), repartos: {} };
+      Almacen.restaurarTodo(v1);
+      prueba("B13", "Respaldo viejo (v1) se puede restaurar", 15, Almacen.obtenerTiendas().length);
+      prueba("B14", "…y deja el rancho vacío (no existía entonces)", 0, Almacen.listarFechasRancho().length);
+      prueba("B15", "…y las personas vacías", 0, Almacen.obtenerPersonas().length);
+      prueba("B16", "…y los precios del rancho en los de siempre", 20, Almacen.obtenerPreciosRancho().caliente);
+
+      // Respaldos inválidos del rancho
+      Almacen.restaurarTodo(JSON.parse(texto));
+      const antes = JSON.stringify(Almacen._bk().datos);
+      const malos = [
+        ["B17", "Rechaza fiado de una persona que no existe", function (d) { d.ranchos["2026-10-20"].fiados[0].personaId = 99; }],
+        ["B18", "Rechaza rancho cerrado con datos incorrectos", function (d) { d.ranchos["2026-10-20"].caliente.regresan = "999"; }],
+        ["B19", "Rechaza rancho cerrado sin fría de tiendas", function (d) { delete d.ranchos["2026-10-20"].friaDeTiendas; }],
+        ["B20", "Rechaza dos personas con el mismo número", function (d) { d.personas[1].id = d.personas[0].id; }],
+        ["B21", "Rechaza precio de fría negativo en una persona", function (d) { d.personas[0].precioFria = -2; }],
+        ["B22", "Rechaza precios del rancho incorrectos", function (d) { d.preciosRancho.masa = 0; }],
+        ["B23", "Rechaza fecha de rancho inexistente", function (d) { d.ranchos["2026-02-30"] = clonar(d.ranchos["2026-10-20"]); d.ranchos["2026-02-30"].fecha = "2026-02-30"; }],
+        ["B24", "Rechaza respaldo v2 sin la lista de personas", function (d) { delete d.personas; }],
+        ["B25", "Rechaza kilos ilegibles en el rancho", function (d) { d.ranchos["2026-10-20"].fria.extra = { x: 1 }; }]
+      ];
+      malos.forEach(function (m) {
+        const copia = JSON.parse(texto);
+        m[2](copia);
+        prueba(m[0], m[1], true, lanza(function () { Almacen.restaurarTodo(copia); }));
+      });
+      prueba("B26", "Tras los 9 rechazos, los datos siguen idénticos", antes, JSON.stringify(Almacen._bk().datos));
+
+      // Fallo en la ÚLTIMA escritura (el rancho) al restaurar un v2: se deshace todo
+      const frag = new MemoriaQueFallaEn(5);
+      Almacen.usarBackend(frag);
+      armarReparto("2026-10-20", true);
+      armarRanchoEjemplo("2026-10-20");
+      const foto = JSON.stringify(frag.datos);
+      frag.activarFallo = true;
+      const msg = mensaje(function () { Almacen.restaurarTodo(JSON.parse(texto)); });
+      frag.activarFallo = false;
+      prueba("B27", "Fallo a medias: avisa que los datos anteriores quedaron intactos", true, msg.indexOf("intactos") >= 0);
+      prueba("B28", "Fallo a medias: se deshace todo, incluido el rancho", foto, JSON.stringify(frag.datos));
+
+      // Exportación omite lo vacío
+      Almacen.usarBackend(new MemoriaFalsa());
+      Almacen.guardarRancho(Almacen.nuevoRancho("2026-10-30"));
+      prueba("B29", "Respaldo no incluye un rancho abierto y vacío", 0, Object.keys(Almacen.exportarTodo().ranchos).length);
+
+      // ================= CSV =================
+      ejemploCompleto("2026-10-20");
+      const csvR = Almacen.aCSVRancho().replace("\uFEFF", "").trim().split("\r\n");
+      prueba("CS1", "CSV del rancho: encabezado + 1 fila (un día)", 2, csvR.length);
+      prueba("CS2", "CSV del rancho: la fila del ejemplo",
+        "2026-10-20,65,0,20,45,20,900,3,5,1,2,3,12,2,13,62,10,0,1,9,13,117,1079,437", csvR[1]);
+      prueba("CS3", "CSV del rancho: 24 columnas", 24, csvR[0].split(",").length);
+      const csvF = Almacen.aCSVFiados().replace("\uFEFF", "").trim().split("\r\n");
+      prueba("CS4", "CSV de fiados: encabezado + 4 fiados", 5, csvF.length);
+      prueba("CS5", "CSV de fiados: primer fiado (María, 12 kg a $20 = $240)", "2026-10-20,1,María,caliente,12,20,240", csvF[1]);
+      prueba("CS6", "CSV de fiados: fría de Juan (2 kg a $12 = $24)", "2026-10-20,3,Juan,fria,2,12,24", csvF[3]);
+      prueba("CS7", "CSV: empieza con marca UTF-8", true, Almacen.aCSVRancho().charCodeAt(0) === 0xFEFF);
+      Almacen.reabrirRancho("2026-10-20");
+      prueba("CS8", "CSV del rancho: un rancho abierto no entra", 1, Almacen.aCSVRancho().replace("\uFEFF", "").trim().split("\r\n").length);
+      prueba("CS9", "CSV de fiados: un rancho abierto no entra", 1, Almacen.aCSVFiados().replace("\uFEFF", "").trim().split("\r\n").length);
+
+      Almacen.usarBackend(null);
+      return RESULTADOS.slice();
+    }
+    // ===== MARCA-FIN-PRUEBAS =====
+
+    const resultados = ejecutarPruebasRanchoGuardado();
+    const filas = document.getElementById("filas");
+    let correctas = 0;
+    resultados.forEach(function (r) {
+      if (r.ok) correctas += 1;
+      const tr = document.createElement("tr");
+      tr.className = r.ok ? "ok" : "falla";
+      [r.id, r.descripcion, String(r.esperado).slice(0, 60), String(r.obtenido).slice(0, 60), r.ok ? "OK" : "FALLA"].forEach(function (texto) {
+        const td = document.createElement("td");
+        td.textContent = texto;
+        tr.appendChild(td);
+      });
+      filas.appendChild(tr);
+    });
+    const resumen = document.getElementById("resumen");
+    resumen.textContent = correctas + " de " + resultados.length + " pruebas correctas";
+    resumen.className = correctas === resultados.length ? "bien" : "mal";
+  </script>
+</body>
+</html>

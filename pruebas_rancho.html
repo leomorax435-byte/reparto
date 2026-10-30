@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pruebas de las reglas del rancho</title>
+  <style>
+    body { font-family: Arial, sans-serif; max-width: 900px; margin: 24px auto; padding: 0 16px; color: #1f2933; }
+    h1 { font-size: 22px; margin-bottom: 4px; }
+    p.nota { color: #52606d; margin-top: 0; }
+    #resumen { font-size: 18px; font-weight: bold; padding: 12px 16px; border-radius: 6px; margin: 16px 0; }
+    #resumen.bien { background: #d9f2e0; color: #11602c; }
+    #resumen.mal { background: #fbdada; color: #8a1c1c; }
+    table { border-collapse: collapse; width: 100%; font-size: 14px; }
+    th, td { border: 1px solid #cbd2d9; padding: 6px 8px; text-align: left; }
+    th { background: #1f4e78; color: #fff; }
+    tr.ok td:last-child { color: #11602c; font-weight: bold; }
+    tr.falla { background: #fbdada; }
+    tr.falla td:last-child { color: #8a1c1c; font-weight: bold; }
+  </style>
+</head>
+<body>
+  <h1>Pruebas de las reglas del rancho</h1>
+  <p class="nota">Cada fila compara el resultado calculado a mano (esperado) con el que da el código (obtenido).</p>
+  <div id="resumen"></div>
+  <table>
+    <thead><tr><th>Prueba</th><th>Qué comprueba</th><th>Esperado</th><th>Obtenido</th><th>Resultado</th></tr></thead>
+    <tbody id="filas"></tbody>
+  </table>
+
+  <script src="logica.js"></script>
+  <script src="logica_rancho.js"></script>
+  <script>
+    // ===== MARCA-INICIO-PRUEBAS =====
+    const RESULTADOS = [];
+    function prueba(id, descripcion, esperado, obtenido) {
+      let ok;
+      if (typeof esperado === "number") ok = typeof obtenido === "number" && Math.abs(esperado - obtenido) < 0.005;
+      else ok = esperado === obtenido;
+      RESULTADOS.push({ id: id, descripcion: descripcion, esperado: esperado, obtenido: obtenido, ok: ok });
+    }
+    const L = LogicaRancho;
+
+    function ejecutarPruebasRancho() {
+      RESULTADOS.length = 0;
+
+      // ===== A. Caliente y masa (un solo precio) =====
+      const casosP = [
+        ["P1", "Ejemplo: 65 kg caliente, 20 fiados, a $20", 20, 65, 0, 20, 45, 900],
+        ["P2", "Masa: 10 kg, 1 fiado, a $13", 13, 10, 0, 1, 9, 117],
+        ["P3", "Caliente: 40 llevados, 3 regresan, 5 fiados", 20, 40, 3, 5, 32, 640],
+        ["P4", "Sin fiados ni regresos", 20, 30, 0, 0, 30, 600],
+        ["P5", "Decimales: 12.5 llevados, 0.5 regresan, 2 fiados", 20, 12.5, 0.5, 2, 10, 200],
+        ["P6", "Todo fiado (no entra dinero)", 20, 10, 0, 10, 0, 0]
+      ];
+      casosP.forEach(function (c) {
+        const r = L.calcularProducto(c[2], c[3], c[4], c[5]);
+        prueba(c[0] + " vendidos", c[1] + ": kg vendidos", c[6], r.vendidos);
+        prueba(c[0] + " dinero", c[1] + ": dinero", c[7], r.dinero);
+      });
+
+      // ===== B. Validación de caliente y masa =====
+      const casosV = [
+        ["V1", "Sin captura", "", "", 0, "Sin captura"],
+        ["V2", "Falta llevados", "", "0", 0, "Falta llevados"],
+        ["V3", "Falta regresan (debe escribirse 0)", "10", "", 0, "Falta regresan (escribe 0)"],
+        ["V4", "Texto en lugar de número", "abc", "0", 0, "No es número"],
+        ["V5", "Negativo", "-5", "0", 0, "Negativo"],
+        ["V6", "Fiados + regresan superan lo llevado", "10", "3", 8, "Fiados y regresan superan lo llevado"],
+        ["V7", "Fiado sin haber llevado nada", "", "", 5, "Falta llevados"],
+        ["V8", "Decimal con coma no es número", "1,5", "0", 0, "No es número"],
+        ["V9", "Justo al límite es válido (10 = 7 + 3)", "10", "3", 7, "OK"]
+      ];
+      casosV.forEach(function (v) {
+        prueba(v[0], v[1], v[5], L.validarProducto(v[2], v[3], v[4]));
+      });
+
+      // ===== C. Fría (dos precios) =====
+      const P = L.preciosPorDefecto();
+      const fria = function (extra, regresan, a, b) { return { extra: extra, regresan: regresan, contadoA: a, contadoB: b }; };
+      let r = L.calcularFria(P, fria("5", "1", "3", "2"), 3, 2);
+      prueba("F1 llevados", "Ejemplo: 3 de tiendas + 5 extra = 8 llevados", 8, r.llevados);
+      prueba("F1 vendidos", "Ejemplo: 8 - 2 fiados - 1 regresa = 5 vendidos", 5, r.vendidos);
+      prueba("F1 dinero", "Ejemplo: 3 x $12 + 2 x $13 = $62", 62, r.dinero);
+      prueba("F1 estado", "Ejemplo: estado OK", "OK", r.estado);
+      r = L.calcularFria(P, fria("5", "1", "3", "3"), 3, 2);
+      prueba("F2", "Contado 6 kg pero deberían ser 5: no cuadra", "Lo vendido de contado no cuadra", r.estado);
+      prueba("F2 dinero", "Si no cuadra, no suma dinero", 0, r.dinero);
+      prueba("F2 esperado", "Y se informa cuánto debió ser (5)", 5, r.esperadoContado);
+      r = L.calcularFria(P, fria("", "0", "3", "0"), 3, 0);
+      prueba("F3", "Extra vacío cuenta como 0: 3 kg a $12 = $36", 36, r.dinero);
+      prueba("F4", "Sin fría de tiendas y todo vacío: sin captura", "Sin captura",
+        L.calcularFria(P, fria("", "", "", ""), 0, 0).estado);
+      prueba("F5", "Hay fría de tiendas pero no se anotó qué pasó con ella", "Falta regresan (escribe 0)",
+        L.calcularFria(P, fria("", "", "", ""), 3, 0).estado);
+      prueba("F6", "Falta anotar los kilos de contado", "Falta kilos de contado (escribe 0)",
+        L.calcularFria(P, fria("", "0", "", ""), 3, 0).estado);
+      r = L.calcularFria(P, fria("0.5", "0", "1.5", "1.5"), 2.5, 0);
+      prueba("F7", "Decimales: 1.5 x $12 + 1.5 x $13 = $37.50", 37.5, r.dinero);
+      prueba("F8", "Fiados + regresan superan lo llevado", "Fiados y regresan superan lo llevado",
+        L.calcularFria(P, fria("", "2", "0", "0"), 3, 2).estado);
+      prueba("F9", "Negativo en kilos de contado", "Negativo",
+        L.calcularFria(P, fria("", "0", "-1", "4"), 3, 0).estado);
+      prueba("F10", "Texto en fría extra", "No es número",
+        L.calcularFria(P, fria("mucha", "0", "3", "0"), 3, 0).estado);
+      prueba("F11", "Solo de otras rutas (0 de tiendas): 4 kg a $13 = $52", 52,
+        L.calcularFria(P, fria("4", "0", "0", "4"), 0, 0).dinero);
+
+      // ===== D. Fiados =====
+      const fi = function (cambio) {
+        const base = { personaId: 1, nombre: "María", producto: "caliente", kg: "12", precio: 20 };
+        Object.keys(cambio).forEach(function (k) { base[k] = cambio[k]; });
+        return base;
+      };
+      prueba("FI1", "Fiado válido", "OK", L.validarFiado(fi({})));
+      prueba("FI2", "Fiado sin persona", "Falta persona", L.validarFiado(fi({ personaId: "", nombre: "" })));
+      prueba("FI3", "Producto desconocido", "Producto desconocido", L.validarFiado(fi({ producto: "queso" })));
+      prueba("FI4", "Kilos en cero", "Kg debe ser mayor que 0", L.validarFiado(fi({ kg: "0" })));
+      prueba("FI5", "Kilos negativos", "Kg debe ser mayor que 0", L.validarFiado(fi({ kg: "-2" })));
+      prueba("FI6", "Kilos con texto", "Kg no válido", L.validarFiado(fi({ kg: "doce" })));
+      prueba("FI7", "Kilos vacíos", "Kg no válido", L.validarFiado(fi({ kg: "" })));
+      prueba("FI8", "Precio inválido", "Precio no válido", L.validarFiado(fi({ precio: 0 })));
+
+      // ===== E. Rancho completo (el ejemplo de la conversación) =====
+      const ejemplo = L.nuevoRancho("2026-10-20");
+      ejemplo.caliente = { llevados: "65", regresan: "0" };
+      ejemplo.fria = { extra: "5", regresan: "1", contadoA: "3", contadoB: "2" };
+      ejemplo.masa = { llevados: "10", regresan: "0" };
+      ejemplo.fiados = [
+        { personaId: 1, nombre: "María", producto: "caliente", kg: "12", precio: 20 },
+        { personaId: 2, nombre: "Pedro", producto: "caliente", kg: "8", precio: 20 },
+        { personaId: 3, nombre: "Juan", producto: "fria", kg: "2", precio: 12 },
+        { personaId: 4, nombre: "Ana", producto: "masa", kg: "1", precio: 13 }
+      ];
+      let s = L.resumirRancho(ejemplo, 3);
+      prueba("E1", "Rancho: dinero esperado total ($900 + $62 + $117)", 1079, s.dineroRancho);
+      prueba("E2", "Rancho: fiado por cobrar (400 + 24 + 13)", 437, s.fiadoPorCobrar);
+      prueba("E3", "Rancho: estado", "Listo para cerrar", s.estado);
+      prueba("E4", "Rancho: kg fiados de caliente (12 + 8)", 20, s.kgFiados.caliente);
+      prueba("E5", "Rancho: caliente vendida", 45, s.caliente.vendidos);
+      prueba("E6", "Rancho: fría vendida", 5, s.fria.vendidos);
+      prueba("E7", "Rancho: masa, dinero", 117, s.masa.dinero);
+      prueba("E8", "Rancho: filas con error", 0, s.filasConError);
+
+      // Con un error en masa: no suma, y pide revisar
+      const conError = JSON.parse(JSON.stringify(ejemplo));
+      conError.masa.regresan = "";
+      s = L.resumirRancho(conError, 3);
+      prueba("E9", "Error en masa: no suma su dinero (900 + 62)", 962, s.dineroRancho);
+      prueba("E10", "Error en masa: pide revisar", "Revisar 1 fila(s)", s.estado);
+
+      // Un fiado inválido no suma al "por cobrar" ni a los kilos fiados
+      const fiadoMalo = JSON.parse(JSON.stringify(ejemplo));
+      fiadoMalo.fiados.push({ personaId: 5, nombre: "Luis", producto: "caliente", kg: "0", precio: 20 });
+      s = L.resumirRancho(fiadoMalo, 3);
+      prueba("E11", "Fiado inválido: no suma al por cobrar", 437, s.fiadoPorCobrar);
+      prueba("E12", "Fiado inválido: pide revisar", "Revisar 1 fila(s)", s.estado);
+      prueba("E13", "Fiado inválido: no cambia los kilos fiados", 20, s.kgFiados.caliente);
+
+      // Día solo con caliente
+      const solo = L.nuevoRancho("2026-10-21");
+      solo.caliente = { llevados: "30", regresan: "0" };
+      s = L.resumirRancho(solo, 0);
+      prueba("E14", "Solo caliente: listo para cerrar", "Listo para cerrar", s.estado);
+      prueba("E15", "Solo caliente: 30 x $20", 600, s.dineroRancho);
+
+      // Día sin datos
+      s = L.resumirRancho(L.nuevoRancho("2026-10-22"), 0);
+      prueba("E16", "Día sin datos: estado", "Sin datos", s.estado);
+      prueba("E17", "Día sin datos: dinero", 0, s.dineroRancho);
+
+      // Hay fría de tiendas y el rancho no la contó: debe avisar
+      s = L.resumirRancho(L.nuevoRancho("2026-10-23"), 3);
+      prueba("E18", "Hay 3 kg fríos de tiendas sin contabilizar en el rancho: pide revisar", "Revisar 1 fila(s)", s.estado);
+
+      // Cambiar el precio del día no cambia lo ya calculado con otro precio
+      const otroPrecio = JSON.parse(JSON.stringify(ejemplo));
+      otroPrecio.precios.caliente = 22;
+      prueba("E19", "Con caliente a $22 el mismo día daría $990 en caliente (el día original sigue en $900)", 990,
+        L.resumirRancho(otroPrecio, 3).caliente.dinero);
+      prueba("E20", "El rancho original sigue igual", 900, L.resumirRancho(ejemplo, 3).caliente.dinero);
+
+      // ===== F. Total del día =====
+      let d = L.resumirDia({ total: 908, cerrado: true }, { total: 1079, cerrado: true });
+      prueba("D1", "Total del día: $908 + $1,079", 1987, d.totalDia);
+      prueba("D2", "Con ambos cerrados no es provisional", false, d.provisional);
+      prueba("D3", "Rancho sin cerrar: total provisional", true, L.resumirDia({ total: 908, cerrado: true }, { total: 1079, cerrado: false }).provisional);
+      prueba("D4", "Tiendas sin cerrar: total provisional", true, L.resumirDia({ total: 908, cerrado: false }, { total: 1079, cerrado: true }).provisional);
+      prueba("D5", "Total con decimales ($908.50 + $1,079.25)", 1987.75, L.resumirDia({ total: 908.5, cerrado: true }, { total: 1079.25, cerrado: true }).totalDia);
+      prueba("D6", "El fiado por cobrar NO forma parte del total del día", 1987,
+        L.resumirDia({ total: 908, cerrado: true }, { total: L.resumirRancho(ejemplo, 3).dineroRancho, cerrado: true }).totalDia);
+
+      return RESULTADOS.slice();
+    }
+    // ===== MARCA-FIN-PRUEBAS =====
+
+    const resultados = ejecutarPruebasRancho();
+    const filas = document.getElementById("filas");
+    let correctas = 0;
+    resultados.forEach(function (r) {
+      if (r.ok) correctas += 1;
+      const tr = document.createElement("tr");
+      tr.className = r.ok ? "ok" : "falla";
+      [r.id, r.descripcion, String(r.esperado), String(r.obtenido), r.ok ? "OK" : "FALLA"].forEach(function (texto) {
+        const td = document.createElement("td");
+        td.textContent = texto;
+        tr.appendChild(td);
+      });
+      filas.appendChild(tr);
+    });
+    const resumen = document.getElementById("resumen");
+    resumen.textContent = correctas + " de " + resultados.length + " pruebas correctas";
+    resumen.className = correctas === resultados.length ? "bien" : "mal";
+  </script>
+</body>
+</html>

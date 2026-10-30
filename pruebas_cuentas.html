@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pruebas de las cuentas por cobrar</title>
+  <style>
+    body { font-family: Arial, sans-serif; max-width: 900px; margin: 24px auto; padding: 0 16px; color: #1f2933; }
+    h1 { font-size: 22px; margin-bottom: 4px; }
+    p.nota { color: #52606d; margin-top: 0; }
+    #resumen { font-size: 18px; font-weight: bold; padding: 12px 16px; border-radius: 6px; margin: 16px 0; }
+    #resumen.bien { background: #d9f2e0; color: #11602c; }
+    #resumen.mal { background: #fbdada; color: #8a1c1c; }
+    table { border-collapse: collapse; width: 100%; font-size: 14px; }
+    th, td { border: 1px solid #cbd2d9; padding: 6px 8px; text-align: left; }
+    th { background: #1f4e78; color: #fff; }
+    tr.ok td:last-child { color: #11602c; font-weight: bold; }
+    tr.falla { background: #fbdada; }
+    tr.falla td:last-child { color: #8a1c1c; font-weight: bold; }
+  </style>
+</head>
+<body>
+  <h1>Pruebas de las cuentas por cobrar</h1>
+  <p class="nota">Cada fila compara el resultado calculado a mano (esperado) con el que da el código (obtenido).</p>
+  <div id="resumen"></div>
+  <table>
+    <thead><tr><th>Prueba</th><th>Qué comprueba</th><th>Esperado</th><th>Obtenido</th><th>Resultado</th></tr></thead>
+    <tbody id="filas"></tbody>
+  </table>
+
+  <script src="logica.js"></script>
+  <script src="logica_rancho.js"></script>
+  <script src="logica_cuentas.js"></script>
+  <script>
+    // ===== MARCA-INICIO-PRUEBAS =====
+    const RESULTADOS = [];
+    function prueba(id, descripcion, esperado, obtenido) {
+      let ok;
+      if (typeof esperado === "number") ok = typeof obtenido === "number" && Math.abs(esperado - obtenido) < 0.005;
+      else ok = esperado === obtenido;
+      RESULTADOS.push({ id: id, descripcion: descripcion, esperado: esperado, obtenido: obtenido, ok: ok });
+    }
+    const LC = LogicaCuentas;
+    const fi = function (fecha, producto, kg, precio, id) { return { fecha: fecha, producto: producto, kg: kg, precio: precio, id: id }; };
+
+    function ejecutarPruebasCuentas() {
+      RESULTADOS.length = 0;
+      const HOY = "2026-10-21";
+
+      // ===== A. El ejemplo de Juan: 2 kg un día y 4 kg al siguiente =====
+      const juan = [fi("2026-10-19", "caliente", "2", 20, 1), fi("2026-10-20", "caliente", "4", 20, 1)];
+      let c = LC.estadoDeCuenta(juan, [], HOY);
+      prueba("A1", "Juan sin pagos: total fiado (2 kg + 4 kg de caliente a $20)", 120, c.totalFiado);
+      prueba("A2", "Juan sin pagos: saldo", 120, c.saldo);
+      prueba("A3", "Juan: el 19/10 son 2 kg = $40", 40, c.lineas[0].importe);
+      prueba("A4", "Juan: el 20/10 son 4 kg = $80", 80, c.lineas[1].importe);
+      prueba("A5", "Juan: 2 movimientos (los dos fiados)", 2, c.movimientos.length);
+      prueba("A5b", "Juan: saldo después del 19/10 = $40", 40, c.movimientos[0].saldoDespues);
+      prueba("A5c", "Juan: saldo después del 20/10 = $120", 120, c.movimientos[1].saldoDespues);
+      prueba("A6", "Juan: antigüedad desde el 19/10 = 2 días", 2, c.diasAntiguedad);
+      prueba("A7", "Juan: segmento 'hasta 7 días'", "reciente", c.segmento);
+      prueba("A8", "Juan: kilos de caliente fiados (6)", 6, c.kgFiadoPorProducto.caliente);
+
+      // ===== B. Cobros: se aplican al fiado más antiguo =====
+      c = LC.estadoDeCuenta(juan, [{ id: 1, fecha: "2026-10-21", monto: 50 }], HOY);
+      prueba("B1", "Pago de $50: ahora hay 3 movimientos", 3, c.movimientos.length);
+      prueba("B2", "Pago de $50: el último movimiento es el pago", "cobro", c.movimientos[2].tipo);
+      prueba("B3", "Pago de $50: resta del total (120 - 50)", 70, c.movimientos[2].saldoDespues);
+      prueba("B4", "Pago de $50: los fiados anteriores no cambian su saldo corrido", 120, c.movimientos[1].saldoDespues);
+      prueba("B5", "Pago de $50: saldo $70", 70, c.saldo);
+      prueba("B6", "Pago de $50: por convención cubre lo más antiguo, la antigüedad pasa al 20/10 (1 día)", 1, c.diasAntiguedad);
+      c = LC.estadoDeCuenta(juan, [{ monto: 30 }, { monto: 20 }], HOY);
+      prueba("B7", "Dos pagos ($30 + $20) equivalen a uno de $50", 70, c.saldo);
+      c = LC.estadoDeCuenta(juan, [{ monto: 120 }], HOY);
+      prueba("B8", "Pago total: saldo 0", 0, c.saldo);
+      prueba("B9", "Pago total: sin antigüedad", null, c.diasAntiguedad);
+      prueba("B10", "Pago total: segmento 'sin saldo'", "sin_saldo", c.segmento);
+      prueba("B11", "Pago total: el saldo corrido termina en 0", 0, c.movimientos[c.movimientos.length - 1].saldoDespues);
+      c = LC.estadoDeCuenta(juan, [{ monto: 130 }], HOY);
+      prueba("B12", "Pago de más ($130): saldo negativo", -10, c.saldo);
+      prueba("B13", "Pago de más: queda $10 a su favor", 10, c.aFavor);
+      prueba("B14", "Pago de más: sin segmento de deuda", "sin_saldo", c.segmento);
+
+      // ===== C. Varios productos el mismo día =====
+      const varios = [fi("2026-10-19", "caliente", "2", 20, 1), fi("2026-10-19", "fria", "1", 12, 2), fi("2026-10-19", "masa", "1.5", 13, 3)];
+      c = LC.estadoDeCuenta(varios, [], HOY);
+      prueba("C1", "Mismo día, 3 productos: 40 + 12 + 19.50", 71.5, c.totalFiado);
+      prueba("C2", "Mismo día: fría a su precio ($12)", 12, c.lineas[1].importe);
+      prueba("C3", "Mismo día: masa 1.5 kg x $13", 19.5, c.lineas[2].importe);
+      prueba("C4", "Un pago de $45 deja un saldo de $26.50 (71.50 - 45)", 26.5, LC.estadoDeCuenta(varios, [{ monto: 45 }], HOY).saldo);
+
+      // ===== D. Orden por fecha sin importar cómo lleguen =====
+      const desordenado = [fi("2026-10-20", "caliente", "4", 20, 1), fi("2026-10-19", "caliente", "2", 20, 1)];
+      c = LC.estadoDeCuenta(desordenado, [{ monto: 40 }], HOY);
+      prueba("D1", "Fiados fuera de orden: los pagos van al más antiguo (19/10)", "2026-10-19", c.lineas[0].fecha);
+      prueba("D2", "Fiados fuera de orden: el primer movimiento es el del 19/10 ($40)", 40, c.movimientos[0].saldoDespues);
+
+      // ===== E. Decimales sin errores =====
+      c = LC.estadoDeCuenta([fi("2026-10-19", "masa", "0.3", 13, 1), fi("2026-10-19", "caliente", "1.1", 20, 2)], [{ monto: 3.9 }], HOY);
+      prueba("E1", "0.3 kg x $13 = $3.90 exactos", 3.9, c.lineas[0].importe);
+      prueba("E2", "1.1 kg x $20 = $22 exactos", 22, c.lineas[1].importe);
+      prueba("E3", "Saldo corrido con centavos: 3.90, 25.90 y luego 22 tras pagar 3.90", "3.9,25.9,22", c.movimientos.map(function (x) { return x.saldoDespues; }).join(","));
+      prueba("E4", "Saldo exacto $22", 22, c.saldo);
+
+      // ===== F. Fechas y segmentos =====
+      prueba("F1", "Días entre el 19 y el 21 de octubre", 2, LC.diasEntre("2026-10-19", "2026-10-21"));
+      prueba("F2", "Días entre el 30/10 y el 02/11 (cambio de mes)", 3, LC.diasEntre("2026-10-30", "2026-11-02"));
+      prueba("F3", "Mismo día: 0", 0, LC.diasEntre("2026-10-21", "2026-10-21"));
+      prueba("F4", "Fecha futura no da días negativos", 0, LC.diasEntre("2026-10-25", "2026-10-21"));
+      prueba("F5", "Días entre el 01/03 y el 01/04 (31 días)", 31, LC.diasEntre("2026-03-01", "2026-04-01"));
+      const seg = [[0, "reciente"], [7, "reciente"], [8, "medio"], [15, "medio"], [16, "atrasado"], [30, "atrasado"], [31, "muy_atrasado"], [200, "muy_atrasado"]];
+      seg.forEach(function (s) { prueba("F6 (" + s[0] + " días)", s[0] + " días: segmento", s[1], LC.segmentoPorDias(s[0])); });
+      const viejo = LC.estadoDeCuenta([fi("2026-08-01", "caliente", "5", 20, 1)], [], HOY);
+      prueba("F7", "Deuda del 01/08: 81 días", 81, viejo.diasAntiguedad);
+      prueba("F8", "Deuda del 01/08: más de 30 días", "muy_atrasado", viejo.segmento);
+
+      // ===== G. Validar un cobro =====
+      prueba("G1", "Cobro válido", "OK", LC.validarCobro("50", 70));
+      prueba("G2", "Cobro igual al saldo es válido", "OK", LC.validarCobro("70", 70));
+      prueba("G3", "Texto no es monto", "Monto no válido", LC.validarCobro("abc", 70));
+      prueba("G4", "Coma decimal no es monto", "Monto no válido", LC.validarCobro("50,5", 70));
+      prueba("G5", "Monto vacío", "Monto no válido", LC.validarCobro("", 70));
+      prueba("G6", "Monto 0", "El monto debe ser mayor que 0", LC.validarCobro("0", 70));
+      prueba("G7", "Monto negativo", "El monto debe ser mayor que 0", LC.validarCobro("-5", 70));
+      prueba("G8", "Cobrar más que el saldo", "El cobro supera el saldo pendiente", LC.validarCobro("70.01", 70));
+      prueba("G9", "Cobrar sin saldo", "No hay saldo pendiente", LC.validarCobro("10", 0));
+      prueba("G10", "Centavos: $0.30 de un saldo de $0.30", "OK", LC.validarCobro("0.3", 0.3));
+
+      // ===== H. Segmentar a quienes deben =====
+      const cuentaJuan = LC.estadoDeCuenta(juan, [], HOY);                                             // $120, 2 días
+      const cuentaPedro = LC.estadoDeCuenta([fi("2026-10-01", "caliente", "1.5", 20, 1)], [], HOY);   // $30, 20 días
+      const cuentaAna = LC.estadoDeCuenta([fi("2026-10-10", "masa", "1", 13, 1)], [{ monto: 13 }], HOY); // $0
+      const personas = [
+        { personaId: 1, nombre: "Pedro", cuenta: cuentaPedro },
+        { personaId: 2, nombre: "Juan", cuenta: cuentaJuan },
+        { personaId: 3, nombre: "Ana", cuenta: cuentaAna }
+      ];
+      let rd = LC.resumenDeudores(personas, "saldo");
+      prueba("H1", "Total por cobrar de todos ($120 + $30)", 150, rd.totalPorCobrar);
+      prueba("H2", "Dos personas con deuda", 2, rd.deudores.length);
+      prueba("H3", "Orden por saldo: Juan primero", "Juan,Pedro", rd.deudores.map(function (p) { return p.nombre; }).join(","));
+      prueba("H4", "Segmento 'hasta 7 días': 1 persona, $120", "1-120", rd.porSegmento.reciente.cantidad + "-" + rd.porSegmento.reciente.monto);
+      prueba("H5", "Segmento '16 a 30 días': 1 persona, $30", "1-30", rd.porSegmento.atrasado.cantidad + "-" + rd.porSegmento.atrasado.monto);
+      prueba("H6", "Segmento '8 a 15 días': nadie", 0, rd.porSegmento.medio.cantidad);
+      prueba("H7", "Ana, que ya pagó todo, queda en 'sin saldo'", "Ana", rd.sinSaldo.map(function (p) { return p.nombre; }).join(","));
+      rd = LC.resumenDeudores(personas, "antiguedad");
+      prueba("H8", "Orden por antigüedad: Pedro (20 días) primero", "Pedro,Juan", rd.deudores.map(function (p) { return p.nombre; }).join(","));
+      rd = LC.resumenDeudores(personas, "nombre");
+      prueba("H9", "Orden por nombre", "Juan,Pedro", rd.deudores.map(function (p) { return p.nombre; }).join(","));
+
+      // ===== I. Texto del estado de cuenta =====
+      const cob = [{ id: 1, fecha: "2026-10-21", monto: 50, nota: "efectivo" }];
+      const cp = LC.estadoDeCuenta(juan, cob, HOY);
+      const texto = LC.textoEstadoDeCuenta("Juan", cp, HOY);
+      prueba("I1", "Texto: trae el nombre", true, texto.indexOf("ESTADO DE CUENTA - Juan") >= 0);
+      prueba("I2", "Texto: el 19/10 con kilos exactos y saldo", true, texto.indexOf("19/10/2026 - Fió Caliente 2 kg x $20.00 = $40.00 | debe $40.00") >= 0);
+      prueba("I3", "Texto: el 20/10 suma al saldo", true, texto.indexOf("20/10/2026 - Fió Caliente 4 kg x $20.00 = $80.00 | debe $120.00") >= 0);
+      prueba("I4", "Texto: el pago resta del total, con su nota", true, texto.indexOf("21/10/2026 - Pago de $50.00 (efectivo) | debe $70.00") >= 0);
+      prueba("I5", "Texto: saldo pendiente", true, texto.indexOf("SALDO PENDIENTE: $70.00") >= 0);
+      const t0 = LC.textoEstadoDeCuenta("Ana", cuentaAna, HOY);
+      prueba("I6", "Texto: al corriente", true, t0.indexOf("al corriente") >= 0 && t0.indexOf("sin deuda") >= 0);
+      const grande = LC.estadoDeCuenta([fi("2026-10-19", "caliente", "100", 20, 1)], [], HOY);
+      prueba("I7", "Texto: miles con coma ($2,000.00)", true, LC.textoEstadoDeCuenta("X", grande, HOY).indexOf("$2,000.00") >= 0);
+
+      // ===== J. La cuenta es un saldo en dinero =====
+      c = LC.estadoDeCuenta(juan, [{ id: 1, fecha: "2026-10-21", monto: 50 }], HOY);
+      prueba("J1", "El pago NO cambia los kilos fiados (siguen 6 kg de caliente)", 6, c.kgFiadoPorProducto.caliente);
+      prueba("J2", "El pago NO cambia el total fiado ($120)", 120, c.totalFiado);
+      c = LC.estadoDeCuenta([fi("2026-10-19", "caliente", "2", 20, 1)], [{ id: 1, fecha: "2026-10-19", monto: 10 }], HOY);
+      prueba("J3", "Mismo día: primero lo fiado y luego lo pagado", "fiado,cobro", c.movimientos.map(function (x) { return x.tipo; }).join(","));
+      c = LC.estadoDeCuenta(juan, [{ id: 1, fecha: "2026-10-21", monto: 130 }], HOY);
+      prueba("J4", "Pago de más: el saldo corrido queda en -$10", -10, c.movimientos[c.movimientos.length - 1].saldoDespues);
+      c = LC.estadoDeCuenta(juan, [{ id: 2, fecha: "2026-10-21", monto: 5, nota: "b" }, { id: 1, fecha: "2026-10-21", monto: 10, nota: "a" }], HOY);
+      prueba("J5", "Dos pagos el mismo día: salen por número", "a,b", c.movimientos.filter(function (x) { return x.tipo === "cobro"; }).map(function (x) { return x.nota; }).join(","));
+      c = LC.estadoDeCuenta(juan, [{ monto: 20 }], HOY);
+      prueba("J6", "Un pago sin fecha cuenta como de hoy", HOY, c.movimientos[c.movimientos.length - 1].fecha);
+      c = LC.estadoDeCuenta([], [], HOY);
+      prueba("J7", "Cuenta vacía: sin movimientos y saldo 0", "0-0", c.movimientos.length + "-" + c.saldo);
+      prueba("J8", "Un pago pegado a un fiado de otro día respeta el orden de fechas", "fiado,fiado,cobro",
+        LC.estadoDeCuenta(juan, [{ id: 1, fecha: "2026-10-20", monto: 10 }], HOY).movimientos.map(function (x) { return x.tipo; }).join(","));
+
+      return RESULTADOS.slice();
+    }
+    // ===== MARCA-FIN-PRUEBAS =====
+
+    const resultados = ejecutarPruebasCuentas();
+    const filas = document.getElementById("filas");
+    let correctas = 0;
+    resultados.forEach(function (r) {
+      if (r.ok) correctas += 1;
+      const tr = document.createElement("tr");
+      tr.className = r.ok ? "ok" : "falla";
+      [r.id, r.descripcion, String(r.esperado), String(r.obtenido), r.ok ? "OK" : "FALLA"].forEach(function (texto) {
+        const td = document.createElement("td");
+        td.textContent = texto;
+        tr.appendChild(td);
+      });
+      filas.appendChild(tr);
+    });
+    const resumen = document.getElementById("resumen");
+    resumen.textContent = correctas + " de " + resultados.length + " pruebas correctas";
+    resumen.className = correctas === resultados.length ? "bien" : "mal";
+  </script>
+</body>
+</html>

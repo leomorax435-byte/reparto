@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#5b3a1e">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Tortillería">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="apple-touch-icon" href="icono-180.png">
+  <title>Reparto de tortillas</title>
+  <link rel="stylesheet" href="estilos.css">
+</head>
+<body>
+  <header class="cabecera">
+    <div>
+      <h1>Reparto de tortillas</h1>
+      <span id="guardado" class="guardado">Guardado automático</span>
+    </div>
+    <label class="fecha">Fecha
+      <input type="date" id="fecha">
+    </label>
+  </header>
+
+  <nav class="pestanas">
+    <button type="button" id="tabReparto" class="activa">Reparto</button>
+    <button type="button" id="tabRancho">Rancho</button>
+    <button type="button" id="tabAnteriores">Anteriores</button>
+    <button type="button" id="tabTiendas">Tiendas</button>
+    <button type="button" id="tabRespaldo">Respaldo</button>
+  </nav>
+
+  <div id="avisoAlmacen" class="aviso mal" hidden></div>
+  <div id="avisoVersion" class="aviso info" hidden>Hay una versión nueva de la app. Ciérrala por completo (deslízala hacia arriba en el selector de apps) y vuelve a abrirla para usarla.</div>
+  <div id="avisoRespaldo" class="aviso info" hidden></div>
+  <div id="avisoReparto" class="aviso info" hidden></div>
+
+  <main id="vistaReparto">
+    <ul id="lista" class="lista"></ul>
+  </main>
+
+  <main id="vistaRancho" hidden>
+    <div class="subpestanas">
+      <button type="button" id="subDia" class="activa">Del día</button>
+      <button type="button" id="subPersonas">Personas</button>
+      <button type="button" id="subFiados">Por cobrar</button>
+    </div>
+    <div id="avisoRancho" class="aviso info" hidden></div>
+    <section id="panelDia"></section>
+    <section id="panelPersonas" hidden>
+      <button type="button" id="btnNuevaPersona" class="principal agregar">+ Agregar persona</button>
+      <p class="ayuda">Aquí van las personas a quienes se les fía. Cada una tiene su precio de fría ($12 o $13, o el que corresponda). Las personas no se borran, se desactivan, para no perder su historial.</p>
+      <ul id="listaPersonas" class="lista"></ul>
+    </section>
+    <section id="panelFiados" hidden>
+      <p class="ayuda">La cuenta de cada persona es un saldo en dinero: cada fiado suma y cada pago resta del total. Solo cuentan los fiados de ranchos ya cerrados.</p>
+      <div id="listaFiados"></div>
+    </section>
+  </main>
+
+  <main id="vistaAnteriores" hidden>
+    <ul id="listaAnteriores" class="lista"></ul>
+    <p id="sinAnteriores" class="vacio" hidden>Todavía no hay repartos guardados. Captura uno y ciérralo para verlo aquí.</p>
+  </main>
+
+  <main id="vistaTiendas" hidden>
+    <div class="subpestanas">
+      <button type="button" id="subTiendasLista" class="activa">Lista</button>
+      <button type="button" id="subTiendasCobrar">Por cobrar</button>
+    </div>
+    <section id="panelTiendasLista">
+      <button type="button" id="btnNuevaTienda" class="principal agregar">+ Agregar tienda</button>
+      <p class="ayuda">Las tiendas no se borran: se desactivan, para no perder el historial. Un precio nuevo se usa en los repartos que todavía no tienen kilos capturados para esa tienda. Los días ya capturados conservan su precio.</p>
+      <ul id="listaTiendas" class="lista"></ul>
+    </section>
+    <section id="panelTiendasCobrar" hidden>
+      <p class="ayuda">Aquí van las tiendas a las que no se les cobra a diario (cobro quincenal, o que cerraron temprano ese día): lo no cobrado se va sumando día por día y lo que pagan se resta del total. Solo cuentan los repartos ya cerrados.</p>
+      <div id="listaCuentasTiendas"></div>
+    </section>
+  </main>
+
+  <main id="vistaRespaldo" hidden>
+    <section class="bloque" id="bloqueParalelo">
+      <h2>Prueba en paralelo con la libreta</h2>
+      <p class="ayuda">Escribe lo que dice tu libreta del día y la app lo compara con sus cuentas. Se usa la fecha de arriba. Antes, cierra el reparto de tiendas y el rancho de ese día.</p>
+      <p id="parFecha" class="subtitulo"></p>
+      <div id="parAviso" class="aviso info" hidden></div>
+      <div id="parFilas"></div>
+      <label class="campo-form">Nota (opcional)
+        <input type="text" id="parNota" maxlength="120" autocomplete="off">
+      </label>
+      <p id="parError" class="aviso mal" hidden></p>
+      <div class="botones columna">
+        <button type="button" id="btnGuardarParalelo" class="principal">Guardar comparación</button>
+        <button type="button" id="btnQuitarParalelo" class="secundario" hidden>Quitar esta comparación</button>
+      </div>
+      <p class="ayuda">Diferencia = lo que dice la libreta menos lo que calcula la app. Estas comparaciones no entran al respaldo completo: se exportan aparte.</p>
+      <div id="parResumen" class="resumen-general" hidden></div>
+      <ul id="parLista" class="lista"></ul>
+      <button type="button" id="btnExportarCSVParalelo" class="secundario">Exportar comparaciones (CSV)</button>
+    </section>
+    <section class="bloque" id="bloqueDeshacer" hidden>
+      <h2>Deshacer</h2>
+      <p id="textoDeshacer" class="ayuda"></p>
+      <button type="button" id="btnDeshacer" class="secundario">Volver a como estaba</button>
+    </section>
+    <section class="bloque">
+      <h2>Empezar con datos reales</h2>
+      <p class="ayuda">Borra todos los repartos, ranchos, fiados cerrados, cobros y comparaciones de prueba. Las tiendas, las personas y los precios se conservan. Antes de borrar se guarda una copia dentro de la app (podrás deshacer desde aquí) y se te pide escribir una palabra de confirmación.</p>
+      <button type="button" id="btnBorrarHistorial" class="secundario">Borrar el historial de prueba</button>
+    </section>
+    <section class="bloque">
+      <h2>Respaldo completo</h2>
+      <p class="ayuda">Guarda TODO (tiendas y repartos) en un archivo. Sirve para recuperar la información si algo falla. Guarda el archivo en un lugar seguro, por ejemplo una memoria USB o tu correo.</p>
+      <button type="button" id="btnDescargarRespaldo" class="principal">Descargar respaldo</button>
+      <p id="ultimoRespaldo" class="ayuda"></p>
+    </section>
+    <section class="bloque">
+      <h2>Restaurar desde un respaldo</h2>
+      <p class="ayuda">Reemplaza todo lo que hay ahora por lo que trae el archivo. Antes de restaurar, se descarga automáticamente una copia de lo actual.</p>
+      <input type="file" id="archivoRespaldo" accept=".json,application/json">
+    </section>
+    <section class="bloque">
+      <h2>Exportar historial para Excel</h2>
+      <p class="ayuda">Archivos CSV con lo ya cerrado. Sirven para hacer gráficas y análisis; no sirven para restaurar. Tiendas y rancho van en archivos separados.</p>
+      <div class="botones columna">
+        <button type="button" id="btnExportarCSV" class="secundario">Tiendas (CSV): una fila por tienda y día</button>
+        <button type="button" id="btnExportarCSVRancho" class="secundario">Rancho (CSV): una fila por día</button>
+        <button type="button" id="btnExportarCSVFiados" class="secundario">Fiados (CSV): una fila por fiado</button>
+        <button type="button" id="btnExportarCSVCobros" class="secundario">Cobros (CSV): una fila por cobro</button>
+        <button type="button" id="btnExportarCSVSaldos" class="secundario">Saldos (CSV): una fila por persona</button>
+        <button type="button" id="btnExportarCSVCobrosTiendas" class="secundario">Cobros de tiendas (CSV): una fila por cobro</button>
+        <button type="button" id="btnExportarCSVSaldosTiendas" class="secundario">Saldos de tiendas (CSV): una fila por tienda</button>
+      </div>
+    </section>
+    <p id="mensajeRespaldo" class="aviso info" hidden></p>
+  </main>
+
+  <footer class="resumen" id="pieReparto">
+    <div class="total">
+      <span class="etiqueta">Dinero neto del día</span>
+      <span id="total" class="cifra">$0.00</span>
+    </div>
+    <dl class="datos cuatro">
+      <div><dt>Kg entregados</dt><dd id="kgEntregados">0</dd></div>
+      <div><dt>Devol. de tarde</dt><dd id="kgDevoluciones">0</dd></div>
+      <div><dt>Kg fríos</dt><dd id="kgFrios">0</dd></div>
+      <div><dt>Kg netos</dt><dd id="kgNetos">0</dd></div>
+    </dl>
+    <p id="noCobradoDia" class="total-dia sin-cobro-nota" hidden></p>
+    <p id="totalDiaReparto" class="total-dia" hidden></p>
+    <p id="estado" class="estado-dia neutro">Sin datos</p>
+    <button type="button" id="btnCerrar" class="principal">Cerrar reparto</button>
+    <button type="button" id="btnReabrir" class="principal reabrir" hidden>Reabrir reparto</button>
+    <div class="botones" id="botonesPrueba">
+      <button type="button" id="btnEjemplo" class="secundario">Cargar ejemplo</button>
+      <button type="button" id="btnLimpiar" class="secundario">Limpiar todo</button>
+    </div>
+  </footer>
+
+  <footer class="resumen" id="pieRancho" hidden>
+    <div class="total">
+      <span class="etiqueta">Dinero esperado del rancho</span>
+      <span id="rTotal" class="cifra">$0.00</span>
+    </div>
+    <dl class="datos">
+      <div><dt>Fiado por cobrar</dt><dd id="rFiado">$0.00</dd></div>
+      <div><dt>Tiendas</dt><dd id="rTiendas">$0.00</dd></div>
+      <div><dt>Dinero neto del día</dt><dd id="rDia">$0.00</dd></div>
+    </dl>
+    <p id="rNota" class="total-dia" hidden></p>
+    <p id="rEstado" class="estado-dia neutro">Sin datos</p>
+    <button type="button" id="btnCerrarRancho" class="principal">Cerrar rancho</button>
+    <button type="button" id="btnReabrirRancho" class="principal reabrir" hidden>Reabrir rancho</button>
+  </footer>
+
+  <div id="superposicion" class="superposicion" hidden>
+    <div class="tarjeta">
+      <h2>Resumen del día</h2>
+      <p id="resumenFecha" class="fecha-resumen"></p>
+      <dl id="resumenCierre" class="lista-resumen"></dl>
+      <p class="advertencia">Al cerrar, el reparto queda protegido y no se puede modificar sin reabrirlo.</p>
+      <div class="botones">
+        <button type="button" id="btnVolver" class="secundario">Volver a corregir</button>
+        <button type="button" id="btnConfirmar" class="principal">Guardar y cerrar</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="superposicionRancho" class="superposicion" hidden>
+    <div class="tarjeta">
+      <h2>Resumen del rancho</h2>
+      <p id="resumenRanchoFecha" class="fecha-resumen"></p>
+      <dl id="resumenRanchoLista" class="lista-resumen"></dl>
+      <p class="advertencia">Al cerrar, el rancho queda protegido y no se puede modificar sin reabrirlo. El fiado por cobrar no es dinero recibido y no se suma al total.</p>
+      <div class="botones">
+        <button type="button" id="btnVolverRancho" class="secundario">Volver a corregir</button>
+        <button type="button" id="btnConfirmarRancho" class="principal">Guardar y cerrar</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="formFiado" class="superposicion" hidden>
+    <div class="tarjeta">
+      <h2>Anotar fiado</h2>
+      <label class="campo-form">Persona
+        <select id="fPersona"></select>
+      </label>
+      <p class="ayuda">Escribe los kilos de cada producto que se lleva. Deja en blanco lo que no se lleve. Se pueden fiar varios productos a la vez.</p>
+      <label class="campo-form"><span id="fLblCaliente">Caliente (kg)</span>
+        <input type="text" id="fKgCaliente" inputmode="decimal" autocomplete="off">
+      </label>
+      <label class="campo-form"><span id="fLblFria">Fría (kg)</span>
+        <input type="text" id="fKgFria" inputmode="decimal" autocomplete="off">
+      </label>
+      <label class="campo-form"><span id="fLblMasa">Masa (kg)</span>
+        <input type="text" id="fKgMasa" inputmode="decimal" autocomplete="off">
+      </label>
+      <p id="fError" class="aviso mal" hidden></p>
+      <div class="botones">
+        <button type="button" id="btnCancelarFiado" class="secundario">Cancelar</button>
+        <button type="button" id="btnGuardarFiado" class="principal">Guardar</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="formCobro" class="superposicion" hidden>
+    <div class="tarjeta">
+      <h2 id="formCobroTitulo">Registrar cobro</h2>
+      <p id="cSaldo" class="ayuda"></p>
+      <label class="campo-form">Monto cobrado ($)
+        <input type="text" id="cMonto" inputmode="decimal" autocomplete="off">
+      </label>
+      <button type="button" id="btnCobrarTodo" class="secundario">Cobrar todo el saldo</button>
+      <label class="campo-form">Fecha del cobro
+        <input type="date" id="cFecha">
+      </label>
+      <label class="campo-form">Nota (opcional)
+        <input type="text" id="cNota" maxlength="80" autocomplete="off">
+      </label>
+      <p id="cError" class="aviso mal" hidden></p>
+      <div class="botones">
+        <button type="button" id="btnCancelarCobro" class="secundario">Cancelar</button>
+        <button type="button" id="btnGuardarCobro" class="principal">Guardar cobro</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="formEstado" class="superposicion" hidden>
+    <div class="tarjeta">
+      <h2>Estado de cuenta</h2>
+      <p class="ayuda">Copia este texto y mándalo a la persona, o úsalo para cobrarle.</p>
+      <textarea id="eTexto" rows="14" readonly></textarea>
+      <p id="eMensaje" class="ayuda" hidden></p>
+      <div class="botones">
+        <button type="button" id="btnCerrarEstado" class="secundario">Cerrar</button>
+        <button type="button" id="btnCopiarEstado" class="principal">Copiar texto</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="formPersona" class="superposicion" hidden>
+    <div class="tarjeta">
+      <h2 id="formPersonaTitulo">Persona</h2>
+      <label class="campo-form">Nombre
+        <input type="text" id="pNombre" maxlength="40" autocomplete="off">
+      </label>
+      <label class="campo-form">Precio de la fría por kg ($)
+        <input type="text" id="pPrecio" inputmode="decimal" autocomplete="off">
+      </label>
+      <p id="pError" class="aviso mal" hidden></p>
+      <div class="botones">
+        <button type="button" id="btnCancelarPersona" class="secundario">Cancelar</button>
+        <button type="button" id="btnGuardarPersona" class="principal">Guardar</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="formPrecios" class="superposicion" hidden>
+    <div class="tarjeta">
+      <h2>Precios del rancho</h2>
+      <label class="campo-form">Caliente ($ por kg)<input type="text" id="ppCaliente" inputmode="decimal" autocomplete="off"></label>
+      <label class="campo-form">Fría, precio A ($ por kg)<input type="text" id="ppFriaA" inputmode="decimal" autocomplete="off"></label>
+      <label class="campo-form">Fría, precio B ($ por kg)<input type="text" id="ppFriaB" inputmode="decimal" autocomplete="off"></label>
+      <label class="campo-form">Masa ($ por kg)<input type="text" id="ppMasa" inputmode="decimal" autocomplete="off"></label>
+      <p class="ayuda">Un precio nuevo se usa en los ranchos que todavía no tienen datos. Los ranchos con datos y los días cerrados conservan el suyo.</p>
+      <p id="ppError" class="aviso mal" hidden></p>
+      <div class="botones">
+        <button type="button" id="btnCancelarPrecios" class="secundario">Cancelar</button>
+        <button type="button" id="btnGuardarPrecios" class="principal">Guardar</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="formCobroT" class="superposicion" hidden>
+    <div class="tarjeta">
+      <h2 id="formCobroTTitulo">Registrar cobro</h2>
+      <p id="cTSaldo" class="ayuda"></p>
+      <label class="campo-form">Monto cobrado ($)
+        <input type="text" id="cTMonto" inputmode="decimal" autocomplete="off">
+      </label>
+      <button type="button" id="btnCobrarTodoT" class="secundario">Cobrar todo el saldo</button>
+      <label class="campo-form">Fecha del cobro
+        <input type="date" id="cTFecha">
+      </label>
+      <label class="campo-form">Nota (opcional)
+        <input type="text" id="cTNota" maxlength="80" autocomplete="off">
+      </label>
+      <p id="cTError" class="aviso mal" hidden></p>
+      <div class="botones">
+        <button type="button" id="btnCancelarCobroT" class="secundario">Cancelar</button>
+        <button type="button" id="btnGuardarCobroT" class="principal">Guardar cobro</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="formEstadoT" class="superposicion" hidden>
+    <div class="tarjeta">
+      <h2>Estado de cuenta de la tienda</h2>
+      <p class="ayuda">Copia este texto y mándalo a la tienda, o úsalo para cobrar.</p>
+      <textarea id="eTTexto" rows="14" readonly></textarea>
+      <p id="eTMensaje" class="ayuda" hidden></p>
+      <div class="botones">
+        <button type="button" id="btnCerrarEstadoT" class="secundario">Cerrar</button>
+        <button type="button" id="btnCopiarEstadoT" class="principal">Copiar texto</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="formTienda" class="superposicion" hidden>
+    <div class="tarjeta">
+      <h2 id="formTiendaTitulo">Tienda</h2>
+      <label class="campo-form">Nombre
+        <input type="text" id="tNombre" maxlength="40" autocomplete="off">
+      </label>
+      <label class="campo-form">Precio por kg ($)
+        <input type="text" id="tPrecio" inputmode="decimal" autocomplete="off">
+      </label>
+      <label class="casilla">
+        <input type="checkbox" id="tCobroQuincenal">
+        <span>Cobro quincenal: se le deja tortilla todos los días, pero no se cobra a diario. En el reparto, su check «Se cobra hoy» empezará sin marcar.</span>
+      </label>
+      <p id="tError" class="aviso mal" hidden></p>
+      <div class="botones">
+        <button type="button" id="btnCancelarTienda" class="secundario">Cancelar</button>
+        <button type="button" id="btnGuardarTienda" class="principal">Guardar</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="logica.js"></script>
+  <script src="logica_rancho.js"></script>
+  <script src="logica_cuentas.js"></script>
+  <script src="logica_paralelo.js"></script>
+  <script src="almacenamiento.js"></script>
+  <script src="pantalla.js"></script>
+  <script src="pantalla_rancho.js"></script>
+  <script src="pantalla_paralelo.js"></script>
+  <script src="pantalla_cuentas_tiendas.js"></script>
+  <script src="registro_sw.js"></script>
+</body>
+</html>

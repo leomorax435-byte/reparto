@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pruebas del guardado de cuentas y cobros</title>
+  <style>
+    body { font-family: Arial, sans-serif; max-width: 900px; margin: 24px auto; padding: 0 16px; color: #1f2933; }
+    h1 { font-size: 22px; margin-bottom: 4px; }
+    p.nota { color: #52606d; margin-top: 0; }
+    #resumen { font-size: 18px; font-weight: bold; padding: 12px 16px; border-radius: 6px; margin: 16px 0; }
+    #resumen.bien { background: #d9f2e0; color: #11602c; }
+    #resumen.mal { background: #fbdada; color: #8a1c1c; }
+    table { border-collapse: collapse; width: 100%; font-size: 14px; }
+    th, td { border: 1px solid #cbd2d9; padding: 6px 8px; text-align: left; }
+    th { background: #1f4e78; color: #fff; }
+    tr.ok td:last-child { color: #11602c; font-weight: bold; }
+    tr.falla { background: #fbdada; }
+    tr.falla td:last-child { color: #8a1c1c; font-weight: bold; }
+  </style>
+</head>
+<body>
+  <h1>Pruebas del guardado de cuentas y cobros</h1>
+  <p class="nota">Cuenta individual por persona, cobros, respaldo y exportación. Usan una memoria de mentira: no tocan tus datos reales.</p>
+  <div id="resumen"></div>
+  <table>
+    <thead><tr><th>Prueba</th><th>Qué comprueba</th><th>Esperado</th><th>Obtenido</th><th>Resultado</th></tr></thead>
+    <tbody id="filas"></tbody>
+  </table>
+
+  <script src="logica.js"></script>
+  <script src="logica_rancho.js"></script>
+  <script src="logica_cuentas.js"></script>
+  <script src="almacenamiento.js"></script>
+  <script>
+    // ===== MARCA-INICIO-PRUEBAS =====
+    function MemoriaFalsa() {
+      this.datos = {};
+      this.escrituras = 0;
+      this.getItem = function (k) { return Object.prototype.hasOwnProperty.call(this.datos, k) ? this.datos[k] : null; };
+      this.setItem = function (k, v) { this.escrituras += 1; this.datos[k] = String(v); };
+      this.removeItem = function (k) { delete this.datos[k]; };
+      this.key = function (i) { return Object.keys(this.datos)[i] || null; };
+      Object.defineProperty(this, "length", { get: function () { return Object.keys(this.datos).length; } });
+    }
+    function MemoriaQueFallaEn(n) {
+      MemoriaFalsa.call(this);
+      let cuenta = 0;
+      const original = this.setItem;
+      this.activarFallo = false;
+      this.setItem = function (k, v) {
+        if (this.activarFallo) { cuenta += 1; if (cuenta === n) throw new Error("memoria llena"); }
+        original.call(this, k, v);
+      };
+    }
+    function lanza(f) { try { f(); return false; } catch (e) { return true; } }
+    function mensaje(f) { try { f(); return ""; } catch (e) { return e.message; } }
+    function clonar(o) { return JSON.parse(JSON.stringify(o)); }
+
+    const RESULTADOS = [];
+    function prueba(id, descripcion, esperado, obtenido) {
+      let ok;
+      if (typeof esperado === "number") ok = typeof obtenido === "number" && Math.abs(esperado - obtenido) < 0.005;
+      else ok = esperado === obtenido;
+      RESULTADOS.push({ id: id, descripcion: descripcion, esperado: esperado, obtenido: obtenido, ok: ok });
+    }
+
+    const HOY = "2026-10-21";
+    function repartoCerrado(fecha) {
+      const r = Almacen.nuevoReparto(fecha, Almacen.obtenerTiendas());
+      r.lineas[0].entregados = "10"; r.lineas[0].sobrantes = "0";
+      Almacen.guardarReparto(r); Almacen.cerrarReparto(fecha);
+    }
+    const lin = function (id, personaId, nombre, producto, kg, precio) {
+      return { id: id, personaId: personaId, nombre: nombre, producto: producto, kg: kg, precio: precio };
+    };
+
+    // Dos días cerrados + un rancho abierto:
+    //  19/10: Juan caliente 2 kg ($40), fría 1 kg ($12), masa 1 kg ($13)  -> $65
+    //  20/10: Juan caliente 4 kg ($80), María caliente 3 kg ($60)
+    //  21/10 (abierto): Juan caliente 5 kg (no cuenta todavía)
+    function armarCaso() {
+      const mem = new MemoriaFalsa();
+      Almacen.usarBackend(mem);
+      Almacen.agregarPersona("María", 12);   // id 1
+      Almacen.agregarPersona("Juan", 12);    // id 2
+
+      repartoCerrado("2026-10-19");
+      const a = Almacen.nuevoRancho("2026-10-19");
+      a.caliente = { llevados: "20", regresan: "0" };
+      a.fria = { extra: "3", regresan: "0", contadoA: "2", contadoB: "0" };
+      a.masa = { llevados: "5", regresan: "0" };
+      a.fiados = [lin(1, 2, "Juan", "caliente", "2", 20), lin(2, 2, "Juan", "fria", "1", 12), lin(3, 2, "Juan", "masa", "1", 13)];
+      Almacen.guardarRancho(a); Almacen.cerrarRancho("2026-10-19");
+
+      repartoCerrado("2026-10-20");
+      const b = Almacen.nuevoRancho("2026-10-20");
+      b.caliente = { llevados: "20", regresan: "0" };
+      b.fiados = [lin(1, 2, "Juan", "caliente", "4", 20), lin(2, 1, "María", "caliente", "3", 20)];
+      Almacen.guardarRancho(b); Almacen.cerrarRancho("2026-10-20");
+
+      const c = Almacen.nuevoRancho("2026-10-21");
+      c.caliente = { llevados: "10", regresan: "0" };
+      c.fiados = [lin(1, 2, "Juan", "caliente", "5", 20)];
+      Almacen.guardarRancho(c);
+      return mem;
+    }
+
+    function ejecutarPruebasCuentasGuardado() {
+      RESULTADOS.length = 0;
+
+      // ================= CUENTA INDIVIDUAL =================
+      let mem = armarCaso();
+      let j = Almacen.cuentaDe(2, HOY);
+      prueba("AC1", "Juan: total fiado confirmado ($65 + $80)", 145, j.cuenta.totalFiado);
+      prueba("AC2", "Juan: saldo", 145, j.cuenta.saldo);
+      prueba("AC3", "Juan: 4 renglones, ordenados por día", "2026-10-19,2026-10-19,2026-10-19,2026-10-20",
+        j.cuenta.lineas.map(function (l) { return l.fecha; }).join(","));
+      prueba("AC4", "Juan: 6 kg de caliente fiados (2 + 4)", 6, j.cuenta.kgFiadoPorProducto.caliente);
+      prueba("AC5", "Juan: 1 kg de fría y 1 kg de masa", "1-1", j.cuenta.kgFiadoPorProducto.fria + "-" + j.cuenta.kgFiadoPorProducto.masa);
+      prueba("AC6", "Juan: el fiado del rancho abierto NO cuenta en el saldo", 145, j.cuenta.saldo);
+      prueba("AC7", "Juan: pero aparece como 'por confirmar' (1)", 1, j.porConfirmar.length);
+      prueba("AC8", "Juan: antigüedad 2 días", 2, j.cuenta.diasAntiguedad);
+      const m = Almacen.cuentaDe(1, HOY);
+      prueba("AC9", "María: saldo $60", 60, m.cuenta.saldo);
+      prueba("AC10", "María: antigüedad 1 día", 1, m.cuenta.diasAntiguedad);
+      prueba("AC11", "Cada persona tiene su cuenta separada (Juan ≠ María)", true, j.cuenta.saldo !== m.cuenta.saldo);
+      prueba("AC12", "Persona inexistente: error", true, lanza(function () { Almacen.cuentaDe(99, HOY); }));
+
+      // ================= COBROS =================
+      const cobro = Almacen.registrarCobro(2, "2026-10-21", "50", "  efectivo  ", HOY);
+      prueba("CO1", "Registrar cobro: recibe el número 1", 1, cobro.id);
+      prueba("CO2", "Registrar cobro: nota sin espacios", "efectivo", cobro.nota);
+      prueba("CO3", "Juan: saldo tras cobrar $50", 95, Almacen.cuentaDe(2, HOY).cuenta.saldo);
+      const movs = Almacen.cuentaDe(2, HOY).cuenta.movimientos;
+      prueba("CO4", "El cobro aparece como el último movimiento de la cuenta", "cobro", movs[movs.length - 1].tipo);
+      prueba("CO5", "Saldo corrido: antes del pago $145, después $95", "145-95", movs[3].saldoDespues + "-" + movs[4].saldoDespues);
+      Almacen.usarBackend(null); Almacen.usarBackend(mem);
+      prueba("CO6", "Tras 'cerrar y abrir', el cobro sigue", 95, Almacen.cuentaDe(2, HOY).cuenta.saldo);
+      const n0 = Almacen.obtenerCobros().length;
+      prueba("CO7", "No deja cobrar más que el saldo", true, lanza(function () { Almacen.registrarCobro(2, "2026-10-21", "95.01", "", HOY); }));
+      prueba("CO8", "…y el mensaje dice cuánto debe", true, mensaje(function () { Almacen.registrarCobro(2, "2026-10-21", "200", "", HOY); }).indexOf("$95.00") >= 0);
+      prueba("CO9", "Cobro de persona inexistente", true, lanza(function () { Almacen.registrarCobro(99, "2026-10-21", "10", "", HOY); }));
+      prueba("CO10", "Fecha inexistente (30 de febrero)", true, lanza(function () { Almacen.registrarCobro(2, "2026-02-30", "10", "", HOY); }));
+      prueba("CO11", "Monto con coma", true, lanza(function () { Almacen.registrarCobro(2, "2026-10-21", "10,5", "", HOY); }));
+      prueba("CO12", "Monto 0", true, lanza(function () { Almacen.registrarCobro(2, "2026-10-21", "0", "", HOY); }));
+      prueba("CO13", "Nota demasiado larga", true, lanza(function () { Almacen.registrarCobro(2, "2026-10-21", "10", new Array(100).join("x"), HOY); }));
+      prueba("CO14", "Tras los 6 rechazos no se guardó ningún cobro más", n0, Almacen.obtenerCobros().length);
+      Almacen.registrarCobro(1, "2026-10-21", "60", "", HOY);
+      prueba("CO15", "El cobro de María no afecta a Juan", 95, Almacen.cuentaDe(2, HOY).cuenta.saldo);
+      prueba("CO16", "María pagó todo: saldo 0", 0, Almacen.cuentaDe(1, HOY).cuenta.saldo);
+      prueba("CO17", "María pagó todo: segmento 'sin saldo'", "sin_saldo", Almacen.cuentaDe(1, HOY).cuenta.segmento);
+      prueba("CO18", "No se cobra a quien no debe nada", true, lanza(function () { Almacen.registrarCobro(1, "2026-10-21", "10", "", HOY); }));
+      Almacen.quitarCobro(2);
+      prueba("CO19", "Quitar el cobro de María restaura su saldo ($60)", 60, Almacen.cuentaDe(1, HOY).cuenta.saldo);
+      prueba("CO20", "Quitar un cobro que no existe: error", true, lanza(function () { Almacen.quitarCobro(99); }));
+      Almacen.registrarCobro(2, "2026-10-22", "95", "liquidó", HOY);
+      prueba("CO21", "Cobrar exactamente el saldo lo deja en 0", 0, Almacen.cuentaDe(2, HOY).cuenta.saldo);
+      prueba("CO22", "Los cobros se listan del más reciente al más antiguo", "2026-10-22", Almacen.cuentaDe(2, HOY).cobros[0].fecha);
+
+      // ================= LISTA DE PERSONAS CON CUENTA =================
+      mem = armarCaso();
+      Almacen.agregarPersona("Ana", 13);  // sin movimientos
+      let cp = Almacen.cuentasDePersonas(HOY);
+      prueba("LP1", "Solo aparecen personas con fiados confirmados o cobros (Ana no)", 2, cp.length);
+      Almacen.establecerActivaPersona(2, false);
+      cp = Almacen.cuentasDePersonas(HOY);
+      prueba("LP2", "Una persona desactivada con saldo sigue en la lista", 2, cp.length);
+      const deud = LogicaCuentas.resumenDeudores(cp, "saldo");
+      prueba("LP3", "Resumen: total por cobrar ($145 + $60)", 205, deud.totalPorCobrar);
+      prueba("LP4", "Resumen: Juan primero por saldo", "Juan,María", deud.deudores.map(function (p) { return p.nombre; }).join(","));
+      prueba("LP5", "Resumen: ambos en 'hasta 7 días'", 2, deud.porSegmento.reciente.cantidad);
+      const tarde = Almacen.cuentasDePersonas("2026-12-01");
+      const dt = LogicaCuentas.resumenDeudores(tarde, "antiguedad");
+      prueba("LP6", "Con el tiempo pasan de segmento: al 01/12 todos 'más de 30 días'", 2, dt.porSegmento.muy_atrasado.cantidad);
+      prueba("LP7", "Al 01/12 Juan (desde el 19/10) tiene 43 días", 43, tarde.filter(function (x) { return x.nombre === "Juan"; })[0].cuenta.diasAntiguedad);
+
+      // ================= REABRIR UN RANCHO =================
+      mem = armarCaso();
+      Almacen.reabrirRancho("2026-10-20");
+      prueba("RR1", "Al reabrir el rancho del 20/10, sus fiados dejan de contar (Juan $65)", 65, Almacen.cuentaDe(2, HOY).cuenta.saldo);
+      prueba("RR2", "…y quedan 'por confirmar' (2: el del 20 y el del 21)", 2, Almacen.cuentaDe(2, HOY).porConfirmar.length);
+      mem = armarCaso();
+      Almacen.registrarCobro(2, "2026-10-21", "100", "", HOY);
+      Almacen.reabrirRancho("2026-10-20");
+      const rrc = Almacen.cuentaDe(2, HOY).cuenta;
+      prueba("RR3", "Si ya se cobró más de lo que queda confirmado: saldo negativo (-$35)", -35, rrc.saldo);
+      prueba("RR4", "…se muestra como saldo a favor ($35)", 35, rrc.aFavor);
+      Almacen.cerrarRancho("2026-10-20");
+      prueba("RR5", "Al volver a cerrar el rancho, la cuenta se normaliza ($45)", 45, Almacen.cuentaDe(2, HOY).cuenta.saldo);
+
+      // ================= RESPALDO VERSIÓN 3 =================
+      mem = armarCaso();
+      Almacen.registrarCobro(2, "2026-10-21", "50", "efectivo", HOY);
+      const resp = Almacen.exportarTodo();
+      const texto = JSON.stringify(resp);
+      prueba("BK1", "Respaldo: versión 4", 4, resp.version);
+      prueba("BK2", "Respaldo: trae el cobro", 1, resp.cobros.length);
+
+      Almacen.usarBackend(new MemoriaFalsa());
+      const res = Almacen.restaurarTodo(JSON.parse(texto));
+      prueba("BK3", "Restaurar informa 1 cobro", 1, res.cobros);
+      prueba("BK4", "Restaurar: el saldo de Juan vuelve igual ($95)", 95, Almacen.cuentaDe(2, HOY).cuenta.saldo);
+      prueba("BK5", "Restaurar: el cobro conserva su nota", "efectivo", Almacen.obtenerCobros()[0].nota);
+
+      // Respaldo versión 2 (sin cobros) y versión 1: dejan los cobros vacíos
+      const v2 = JSON.parse(texto); v2.version = 2; delete v2.cobros;
+      Almacen.restaurarTodo(v2);
+      prueba("BK6", "Respaldo v2 (anterior a los cobros): se restaura", 145, Almacen.cuentaDe(2, HOY).cuenta.saldo);
+      prueba("BK7", "…y deja los cobros vacíos", 0, Almacen.obtenerCobros().length);
+      Almacen.restaurarTodo(JSON.parse(texto));
+      Almacen.restaurarTodo({ aplicacion: "tortilleria", version: 1, exportadoEn: "2026-10-01T00:00:00Z", tiendas: Almacen.tiendasDeEjemplo(), repartos: {} });
+      prueba("BK8", "Respaldo v1: deja los cobros vacíos", 0, Almacen.obtenerCobros().length);
+
+      // Respaldos inválidos
+      Almacen.restaurarTodo(JSON.parse(texto));
+      const antes = JSON.stringify(Almacen._bk().datos);
+      const malos = [
+        ["BK9", "Rechaza cobro de una persona que no existe", function (d) { d.cobros[0].personaId = 99; }],
+        ["BK10", "Rechaza cobro con monto negativo", function (d) { d.cobros[0].monto = -5; }],
+        ["BK11", "Rechaza cobro con monto 0", function (d) { d.cobros[0].monto = 0; }],
+        ["BK12", "Rechaza cobro con fecha inexistente", function (d) { d.cobros[0].fecha = "2026-02-30"; }],
+        ["BK13", "Rechaza dos cobros con el mismo número", function (d) { d.cobros.push(clonar(d.cobros[0])); }],
+        ["BK14", "Rechaza respaldo v3 sin la lista de cobros", function (d) { delete d.cobros; }],
+        ["BK15", "Rechaza cobro con monto como texto", function (d) { d.cobros[0].monto = "50"; }],
+        ["BK16", "Rechaza cobro con nota ilegible", function (d) { d.cobros[0].nota = { x: 1 }; }]
+      ];
+      malos.forEach(function (x) {
+        const copia = JSON.parse(texto);
+        x[2](copia);
+        prueba(x[0], x[1], true, lanza(function () { Almacen.restaurarTodo(copia); }));
+      });
+      prueba("BK17", "Tras los 8 rechazos, los datos siguen idénticos", antes, JSON.stringify(Almacen._bk().datos));
+
+      // Fallo en la ÚLTIMA escritura: se deshace todo
+      const contador = new MemoriaFalsa();
+      Almacen.usarBackend(contador);
+      contador.escrituras = 0;
+      Almacen.restaurarTodo(JSON.parse(texto));
+      const totalEscrituras = contador.escrituras;
+      const frag = new MemoriaQueFallaEn(totalEscrituras);
+      Almacen.usarBackend(frag);
+      armarCasoEn();
+      function armarCasoEn() { Almacen.agregarPersona("Otra", 12); }
+      const foto = JSON.stringify(frag.datos);
+      frag.activarFallo = true;
+      const msg = mensaje(function () { Almacen.restaurarTodo(JSON.parse(texto)); });
+      frag.activarFallo = false;
+      prueba("BK18", "Fallo en la última escritura: avisa que los datos quedaron intactos", true, msg.indexOf("intactos") >= 0);
+      prueba("BK19", "Fallo en la última escritura: se deshace todo", foto, JSON.stringify(frag.datos));
+
+      // ================= CSV =================
+      mem = armarCaso();
+      Almacen.registrarCobro(2, "2026-10-21", "50", "efectivo", HOY);
+      Almacen.registrarCobro(1, "2026-10-20", "10", "", HOY);
+      const csvC = Almacen.aCSVCobros().replace("\uFEFF", "").trim().split("\r\n");
+      prueba("CS1", "CSV de cobros: encabezado", "fecha,persona_id,persona,monto,nota", csvC[0]);
+      prueba("CS2", "CSV de cobros: ordenados por fecha (primero el 20/10 de María)", "2026-10-20,1,María,10,", csvC[1]);
+      prueba("CS3", "CSV de cobros: el de Juan con su nota", "2026-10-21,2,Juan,50,efectivo", csvC[2]);
+      const csvS = Almacen.aCSVSaldos(HOY).replace("\uFEFF", "").trim().split("\r\n");
+      prueba("CS4", "CSV de saldos: encabezado", "persona_id,persona,activa,total_fiado,total_cobrado,saldo,dias_antiguedad,segmento,fiado_pendiente_mas_antiguo", csvS[0]);
+      prueba("CS5", "CSV de saldos: Juan ($145 fiado, $50 cobrado, $95 de saldo)", true, csvS.indexOf("2,Juan,si,145,50,95,2,Hasta 7 días,2026-10-19") >= 0);
+      prueba("CS6", "CSV de saldos: María ($60 fiado, $10 cobrado, $50 de saldo)", true, csvS.indexOf("1,María,si,60,10,50,1,Hasta 7 días,2026-10-20") >= 0);
+      prueba("CS7", "CSV de saldos: empieza con marca UTF-8", true, Almacen.aCSVSaldos(HOY).charCodeAt(0) === 0xFEFF);
+
+      Almacen.usarBackend(null);
+      return RESULTADOS.slice();
+    }
+    // ===== MARCA-FIN-PRUEBAS =====
+
+    const resultados = ejecutarPruebasCuentasGuardado();
+    const filas = document.getElementById("filas");
+    let correctas = 0;
+    resultados.forEach(function (r) {
+      if (r.ok) correctas += 1;
+      const tr = document.createElement("tr");
+      tr.className = r.ok ? "ok" : "falla";
+      [r.id, r.descripcion, String(r.esperado).slice(0, 60), String(r.obtenido).slice(0, 60), r.ok ? "OK" : "FALLA"].forEach(function (texto) {
+        const td = document.createElement("td");
+        td.textContent = texto;
+        tr.appendChild(td);
+      });
+      filas.appendChild(tr);
+    });
+    const resumen = document.getElementById("resumen");
+    resumen.textContent = correctas + " de " + resultados.length + " pruebas correctas";
+    resumen.className = correctas === resultados.length ? "bien" : "mal";
+  </script>
+</body>
+</html>

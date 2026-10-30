@@ -1,0 +1,16 @@
+{
+  "name": "Tortillería - reparto y cuentas",
+  "short_name": "Tortillería",
+  "description": "Calculadora de reparto, rancho y cuentas por cobrar de la tortillería. Funciona sin internet.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f3f1ec",
+  "theme_color": "#5b3a1e",
+  "lang": "es-MX",
+  "icons": [
+    { "src": "icono-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icono-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}

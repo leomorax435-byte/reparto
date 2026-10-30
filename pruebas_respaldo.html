@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pruebas de tiendas y respaldo</title>
+  <style>
+    body { font-family: Arial, sans-serif; max-width: 860px; margin: 24px auto; padding: 0 16px; color: #1f2933; }
+    h1 { font-size: 22px; margin-bottom: 4px; }
+    p.nota { color: #52606d; margin-top: 0; }
+    #resumen { font-size: 18px; font-weight: bold; padding: 12px 16px; border-radius: 6px; margin: 16px 0; }
+    #resumen.bien { background: #d9f2e0; color: #11602c; }
+    #resumen.mal { background: #fbdada; color: #8a1c1c; }
+    table { border-collapse: collapse; width: 100%; font-size: 14px; }
+    th, td { border: 1px solid #cbd2d9; padding: 6px 8px; text-align: left; }
+    th { background: #1f4e78; color: #fff; }
+    tr.ok td:last-child { color: #11602c; font-weight: bold; }
+    tr.falla { background: #fbdada; }
+    tr.falla td:last-child { color: #8a1c1c; font-weight: bold; }
+  </style>
+</head>
+<body>
+  <h1>Pruebas de tiendas y respaldo</h1>
+  <p class="nota">Estas pruebas usan una memoria de mentira: no tocan tus datos reales.</p>
+  <div id="resumen"></div>
+  <table>
+    <thead><tr><th>Prueba</th><th>Qué comprueba</th><th>Esperado</th><th>Obtenido</th><th>Resultado</th></tr></thead>
+    <tbody id="filas"></tbody>
+  </table>
+
+  <script src="logica.js"></script>
+  <script src="logica_rancho.js"></script>
+  <script src="logica_cuentas.js"></script>
+  <script src="almacenamiento.js"></script>
+  <script>
+    // ===== MARCA-INICIO-PRUEBAS =====
+    function MemoriaFalsa() {
+      this.datos = {};
+      this.getItem = function (k) { return Object.prototype.hasOwnProperty.call(this.datos, k) ? this.datos[k] : null; };
+      this.setItem = function (k, v) { this.datos[k] = String(v); };
+      this.removeItem = function (k) { delete this.datos[k]; };
+      this.key = function (i) { return Object.keys(this.datos)[i] || null; };
+      Object.defineProperty(this, "length", { get: function () { return Object.keys(this.datos).length; } });
+    }
+    // Memoria que falla en la escritura número N después de activar el fallo.
+    // Si "permanente" es true, sigue fallando en todas las escrituras siguientes.
+    function MemoriaQueFallaEn(n, permanente) {
+      MemoriaFalsa.call(this);
+      let escrituras = 0;
+      const original = this.setItem;
+      this.activarFallo = false;
+      this.setItem = function (k, v) {
+        if (this.activarFallo) {
+          escrituras += 1;
+          if (escrituras === n || (permanente && escrituras > n)) throw new Error("memoria llena");
+        }
+        original.call(this, k, v);
+      };
+    }
+    function lanza(f) { try { f(); return false; } catch (e) { return true; } }
+    function mensaje(f) { try { f(); return ""; } catch (e) { return e.message; } }
+    function conDatos(r, pares) {
+      pares.forEach(function (p, i) { r.lineas[i].entregados = p[0]; r.lineas[i].sobrantes = p[1]; });
+      return r;
+    }
+    function clonar(o) { return JSON.parse(JSON.stringify(o)); }
+
+    const RESULTADOS = [];
+    function prueba(id, descripcion, esperado, obtenido) {
+      let ok;
+      if (typeof esperado === "number") ok = typeof obtenido === "number" && Math.abs(esperado - obtenido) < 0.005;
+      else ok = esperado === obtenido;
+      RESULTADOS.push({ id: id, descripcion: descripcion, esperado: esperado, obtenido: obtenido, ok: ok });
+    }
+
+    // Arma un almacén con 2 días cerrados y 1 abierto con datos
+    function armarEjemplo() {
+      const mem = new MemoriaFalsa();
+      Almacen.usarBackend(mem);
+      const tiendas = Almacen.obtenerTiendas();
+      const r1 = conDatos(Almacen.nuevoReparto("2026-10-19", tiendas), [["30", "2"], ["25", "1"]]);
+      Almacen.guardarReparto(r1); Almacen.cerrarReparto("2026-10-19");
+      const r2 = conDatos(Almacen.nuevoReparto("2026-10-20", tiendas), [["28", "1"], ["26", "2"]]);
+      Almacen.guardarReparto(r2); Almacen.cerrarReparto("2026-10-20");
+      const r3 = conDatos(Almacen.nuevoReparto("2026-10-21", tiendas), [["10", "0"]]);
+      Almacen.guardarReparto(r3);
+      return mem;
+    }
+
+    function ejecutarPruebasRespaldo() {
+      RESULTADOS.length = 0;
+
+      // ================= TIENDAS =================
+      Almacen.usarBackend(new MemoriaFalsa());
+      const nueva = Almacen.agregarTienda("  Abarrotes López  ", "19.5");
+      prueba("T1", "Agregar tienda: nombre sin espacios sobrantes", "Abarrotes López", nueva.nombre);
+      prueba("T2", "Agregar tienda: recibe el siguiente número (16)", 16, nueva.id);
+      prueba("T3", "Agregar tienda: precio guardado como número", 19.5, nueva.precio);
+      prueba("T4", "Ahora hay 16 tiendas", 16, Almacen.obtenerTiendas().length);
+      prueba("T5", "No acepta nombre repetido (ignora mayúsculas)", true, lanza(function () { Almacen.agregarTienda("abarrotes lópez", 17); }));
+      prueba("T6", "No acepta nombre vacío", true, lanza(function () { Almacen.agregarTienda("   ", 17); }));
+      prueba("T7", "No acepta precio 0", true, lanza(function () { Almacen.agregarTienda("X", 0); }));
+      prueba("T8", "No acepta precio negativo", true, lanza(function () { Almacen.agregarTienda("X", -5); }));
+      prueba("T9", "No acepta precio con texto", true, lanza(function () { Almacen.agregarTienda("X", "abc"); }));
+      prueba("T10", "No acepta precio con coma decimal", true, lanza(function () { Almacen.agregarTienda("X", "17,5"); }));
+      prueba("T11", "Editar tienda: cambia el precio", 18, Almacen.editarTienda(1, "Tienda 1", "18").precio);
+      prueba("T12", "Editar tienda: puede conservar su propio nombre", "Tienda 1", Almacen.obtenerTiendas()[0].nombre);
+      prueba("T13", "Editar: no puede tomar el nombre de otra", true, lanza(function () { Almacen.editarTienda(1, "Tienda 2", 17); }));
+      Almacen.establecerActiva(16, false);
+      prueba("T14", "Desactivar: la tienda sigue en la lista", 16, Almacen.obtenerTiendas().length);
+      prueba("T15", "Desactivar: queda inactiva", false, Almacen.obtenerTiendas()[15].activa);
+      const otra = Almacen.agregarTienda("Tienda nueva", 17);
+      prueba("T16", "Un número de tienda desactivada no se reutiliza (17)", 17, otra.id);
+
+      // ================= SINCRONIZAR =================
+      Almacen.usarBackend(new MemoriaFalsa());
+      let ti = Almacen.obtenerTiendas();
+      let ab = Almacen.nuevoReparto("2026-11-02", ti);
+      conDatos(ab, [["30", "2"]]);
+      ti = clonar(ti);
+      ti[0].precio = 25;     // Tienda 1 (con datos)
+      ti[1].precio = 30;     // Tienda 2 (sin datos)
+      ti[2].activa = false;  // Tienda 3 (sin datos): se quita
+      ti[3].activa = false;  // Tienda 4: la marcamos con datos antes
+      ab.lineas[3].entregados = "5"; ab.lineas[3].sobrantes = "0";
+      ti.push({ id: 99, nombre: "Tienda 99", precio: 21, activa: true });
+      const cambio = Almacen.sincronizarConTiendas(ab, ti);
+      prueba("S1", "Sincronizar avisa que hubo cambios", true, cambio);
+      prueba("S2", "Fila CON kilos conserva su precio ($17)", 17, ab.lineas[0].precio);
+      prueba("S3", "Fila SIN kilos toma el precio nuevo ($30)", 30, ab.lineas[1].precio);
+      prueba("S4", "Tienda desactivada sin kilos se quita", false, ab.lineas.some(function (l) { return l.tiendaId === 3; }));
+      prueba("S5", "Tienda desactivada CON kilos se queda", true, ab.lineas.some(function (l) { return l.tiendaId === 4; }));
+      prueba("S6", "Tienda nueva se agrega al final", 99, ab.lineas[ab.lineas.length - 1].tiendaId);
+      const cerr = Almacen.nuevoReparto("2026-11-03", Almacen.obtenerTiendas());
+      conDatos(cerr, [["10", "0"]]); cerr.estado = "cerrado";
+      prueba("S7", "Un reparto cerrado nunca se sincroniza", false, Almacen.sincronizarConTiendas(cerr, ti));
+      prueba("S8", "Sincronizar sin cambios devuelve false", false, Almacen.sincronizarConTiendas(ab, ti));
+
+      // ================= RESPALDO =================
+      let mem = armarEjemplo();
+      const resp = Almacen.exportarTodo();
+      prueba("R1", "Respaldo: trae 15 tiendas", 15, resp.tiendas.length);
+      prueba("R2", "Respaldo: trae 3 repartos (2 cerrados + 1 abierto con datos)", 3, Object.keys(resp.repartos).length);
+      prueba("R3", "Respaldo: se puede convertir a texto y volver", 3, Object.keys(JSON.parse(JSON.stringify(resp)).repartos).length);
+
+      // Ida y vuelta: a una memoria vacía
+      const respTexto = JSON.stringify(resp);
+      Almacen.usarBackend(new MemoriaFalsa());
+      const r = Almacen.restaurarTodo(JSON.parse(respTexto));
+      prueba("R4", "Restaurar informa 3 repartos", 3, r.repartos);
+      prueba("R5", "Restaurar: día 1 igual ($908)", 908, Almacen.resumenDe(Almacen.obtenerReparto("2026-10-19")).total);
+      prueba("R6", "Restaurar: día 2 igual (27x17 + 24x18 = $891)", 891, Almacen.resumenDe(Almacen.obtenerReparto("2026-10-20")).total);
+      prueba("R7", "Restaurar: el día cerrado sigue cerrado", "cerrado", Almacen.obtenerReparto("2026-10-20").estado);
+      prueba("R8", "Restaurar: el día abierto sigue abierto con sus datos", "10", Almacen.obtenerReparto("2026-10-21").lineas[0].entregados);
+      prueba("R9", "Restaurar: precio del día 1 conservado ($17)", 17, Almacen.obtenerReparto("2026-10-19").lineas[0].precio);
+
+      // Reemplaza lo que había
+      mem = new MemoriaFalsa(); Almacen.usarBackend(mem);
+      const tt = Almacen.obtenerTiendas();
+      Almacen.guardarReparto(conDatos(Almacen.nuevoReparto("2026-01-05", tt), [["7", "0"]]));
+      Almacen.restaurarTodo(JSON.parse(respTexto));
+      prueba("R10", "Restaurar reemplaza: un día que no estaba en el respaldo desaparece", null, Almacen.obtenerReparto("2026-01-05"));
+      prueba("R11", "Restaurar reemplaza: quedan exactamente 3 fechas", 3, Almacen.listarFechas().length);
+
+      // Respaldos inválidos: no deben tocar nada
+      const antes = JSON.stringify(mem.datos);
+      const malos = [
+        ["R12", "Rechaza respaldo sin tiendas", function (d) { delete d.tiendas; }],
+        ["R13", "Rechaza versión desconocida", function (d) { d.version = 99; }],
+        ["R14", "Rechaza archivo de otra aplicación", function (d) { d.aplicacion = "otra"; }],
+        ["R15", "Rechaza precio negativo en una tienda", function (d) { d.tiendas[0].precio = -3; }],
+        ["R16", "Rechaza dos tiendas con el mismo número", function (d) { d.tiendas[1].id = d.tiendas[0].id; }],
+        ["R17", "Rechaza fecha que no existe (30 de febrero)", function (d) { d.repartos["2026-02-30"] = clonar(d.repartos["2026-10-21"]); d.repartos["2026-02-30"].fecha = "2026-02-30"; }],
+        ["R18", "Rechaza reparto cerrado con datos incorrectos", function (d) { d.repartos["2026-10-19"].lineas[0].sobrantes = "999"; }],
+        ["R19", "Rechaza fila con kilos ilegibles", function (d) { d.repartos["2026-10-21"].lineas[0].entregados = { x: 1 }; }]
+      ];
+      malos.forEach(function (m) {
+        const copia = JSON.parse(respTexto);
+        m[2](copia);
+        prueba(m[0], m[1], true, lanza(function () { Almacen.restaurarTodo(copia); }));
+      });
+      prueba("R20", "Tras 8 respaldos inválidos, los datos siguen idénticos", antes, JSON.stringify(mem.datos));
+      prueba("R21", "Rechaza algo que no es un objeto (texto suelto)", true, lanza(function () { Almacen.restaurarTodo("hola"); }));
+
+      // Si la memoria falla a medias (una sola vez), se deshace todo
+      const frag = new MemoriaQueFallaEn(3, false);
+      Almacen.usarBackend(frag);
+      const t2 = Almacen.obtenerTiendas();
+      Almacen.guardarReparto(conDatos(Almacen.nuevoReparto("2026-01-05", t2), [["7", "0"]]));
+      const fotoAntes = JSON.stringify(frag.datos);
+      frag.activarFallo = true;
+      const msg = mensaje(function () { Almacen.restaurarTodo(JSON.parse(respTexto)); });
+      frag.activarFallo = false;
+      prueba("R22", "Fallo a medias: avisa que los datos anteriores quedaron intactos", true, msg.indexOf("intactos") >= 0);
+      prueba("R23", "Fallo a medias: se deshace todo, nada cambió", fotoAntes, JSON.stringify(frag.datos));
+
+      // Si la memoria falla y además no deja deshacer, lo dice con claridad
+      const frag2 = new MemoriaQueFallaEn(3, true);
+      Almacen.usarBackend(frag2);
+      Almacen.obtenerTiendas();
+      frag2.activarFallo = true;
+      const msg2 = mensaje(function () { Almacen.restaurarTodo(JSON.parse(respTexto)); });
+      frag2.activarFallo = false;
+      prueba("R26", "Fallo total: avisa que no se pudo deshacer (no promete lo que no cumple)", true, msg2.indexOf("tampoco se pudo deshacer") >= 0);
+
+      // Último respaldo
+      Almacen.usarBackend(new MemoriaFalsa());
+      prueba("R24", "Sin respaldo previo: no hay fecha", null, Almacen.obtenerUltimoRespaldo());
+      Almacen.marcarRespaldoHecho();
+      prueba("R25", "Después de respaldar: queda registrada la fecha", true, typeof Almacen.obtenerUltimoRespaldo() === "string");
+
+      // ================= CSV =================
+      armarEjemplo();
+      const csv = Almacen.aCSV();
+      const lineas = csv.replace("\uFEFF", "").trim().split("\r\n");
+      prueba("C1", "CSV: empieza con marca UTF-8 (acentos en Excel)", true, csv.charCodeAt(0) === 0xFEFF);
+      prueba("C2", "CSV: encabezado correcto", "fecha,tienda_id,tienda,precio_aplicado,kg_manana,kg_extras,kg_entregados,kg_devoluciones,kg_frios,kg_netos,importe_calculado,se_cobra,importe_cobrado,importe_no_cobrado", lineas[0]);
+      prueba("C3", "CSV: 4 filas de datos (2 tiendas x 2 días cerrados; el día abierto no entra)", 5, lineas.length);
+      prueba("C4", "CSV: primera fila es día 1, Tienda 1", "2026-10-19,1,Tienda 1,17,30,0,30,0,2,28,476,si,476,0", lineas[1]);
+      prueba("C5", "CSV: Tienda 2 del día 1", "2026-10-19,2,Tienda 2,18,25,0,25,0,1,24,432,si,432,0", lineas[2]);
+      prueba("C6", "CSV: el día 2 va después del día 1", "2026-10-20,1,Tienda 1,17,28,0,28,0,1,27,459,si,459,0", lineas[3]);
+
+      Almacen.usarBackend(new MemoriaFalsa());
+      const tn = Almacen.obtenerTiendas();
+      tn[0].nombre = 'Tienda "Los, Pinos"';
+      tn[1].nombre = "=SUMA(1+1)";
+      Almacen.guardarTiendas(tn);
+      Almacen.guardarReparto(conDatos(Almacen.nuevoReparto("2026-10-19", Almacen.obtenerTiendas()), [["10", "1"], ["10", "0"]]));
+      Almacen.cerrarReparto("2026-10-19");
+      const lin2 = Almacen.aCSV().replace("\uFEFF", "").trim().split("\r\n");
+      prueba("C7", "CSV: nombre con comas y comillas queda entrecomillado", '2026-10-19,1,"Tienda ""Los, Pinos""",17,10,0,10,0,1,9,153,si,153,0', lin2[1]);
+      prueba("C8", "CSV: un nombre que empieza con = no se ejecuta como fórmula", true, lin2[2].indexOf(",'=SUMA(1+1),") >= 0);
+
+      Almacen.usarBackend(null);
+      return RESULTADOS.slice();
+    }
+    // ===== MARCA-FIN-PRUEBAS =====
+
+    const resultados = ejecutarPruebasRespaldo();
+    const filas = document.getElementById("filas");
+    let correctas = 0;
+    resultados.forEach(function (r) {
+      if (r.ok) correctas += 1;
+      const tr = document.createElement("tr");
+      tr.className = r.ok ? "ok" : "falla";
+      [r.id, r.descripcion, String(r.esperado).slice(0, 60), String(r.obtenido).slice(0, 60), r.ok ? "OK" : "FALLA"].forEach(function (texto) {
+        const td = document.createElement("td");
+        td.textContent = texto;
+        tr.appendChild(td);
+      });
+      filas.appendChild(tr);
+    });
+    const resumen = document.getElementById("resumen");
+    resumen.textContent = correctas + " de " + resultados.length + " pruebas correctas";
+    resumen.className = correctas === resultados.length ? "bien" : "mal";
+  </script>
+</body>
+</html>

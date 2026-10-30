@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pruebas de la copia para deshacer</title>
+  <style>
+    body { font-family: Arial, sans-serif; max-width: 900px; margin: 24px auto; padding: 0 16px; color: #1f2933; }
+    h1 { font-size: 22px; margin-bottom: 4px; }
+    p.nota { color: #52606d; margin-top: 0; }
+    #resumen { font-size: 18px; font-weight: bold; padding: 12px 16px; border-radius: 6px; margin: 16px 0; }
+    #resumen.bien { background: #d9f2e0; color: #11602c; }
+    #resumen.mal { background: #fbdada; color: #8a1c1c; }
+    table { border-collapse: collapse; width: 100%; font-size: 14px; }
+    th, td { border: 1px solid #cbd2d9; padding: 6px 8px; text-align: left; }
+    th { background: #1f4e78; color: #fff; }
+    tr.ok td:last-child { color: #11602c; font-weight: bold; }
+    tr.falla { background: #fbdada; }
+    tr.falla td:last-child { color: #8a1c1c; font-weight: bold; }
+  </style>
+</head>
+<body>
+  <h1>Pruebas de la copia para deshacer</h1>
+  <p class="nota">Antes de restaurar o borrar, la app guarda una copia de lo que había para poder volver atrás. Usan una memoria de mentira: no tocan tus datos reales.</p>
+  <div id="resumen"></div>
+  <table>
+    <thead><tr><th>Prueba</th><th>Qué comprueba</th><th>Esperado</th><th>Obtenido</th><th>Resultado</th></tr></thead>
+    <tbody id="filas"></tbody>
+  </table>
+
+  <script src="logica.js"></script>
+  <script src="logica_rancho.js"></script>
+  <script src="logica_cuentas.js"></script>
+  <script src="logica_paralelo.js"></script>
+  <script src="almacenamiento.js"></script>
+  <script>
+    // ===== MARCA-INICIO-PRUEBAS =====
+    function MemoriaFalsa() {
+      this.datos = {};
+      this.getItem = function (k) { return Object.prototype.hasOwnProperty.call(this.datos, k) ? this.datos[k] : null; };
+      this.setItem = function (k, v) { this.datos[k] = String(v); };
+      this.removeItem = function (k) { delete this.datos[k]; };
+      this.key = function (i) { return Object.keys(this.datos)[i] || null; };
+      Object.defineProperty(this, "length", { get: function () { return Object.keys(this.datos).length; } });
+    }
+    function MemoriaLlena() {
+      MemoriaFalsa.call(this);
+      const original = this.setItem;
+      this.llena = false;
+      this.setItem = function (k, v) { if (this.llena) throw new Error("memoria llena"); original.call(this, k, v); };
+    }
+    function lanza(f) { try { f(); return false; } catch (e) { return true; } }
+    const RESULTADOS = [];
+    function prueba(id, descripcion, esperado, obtenido) {
+      let ok;
+      if (typeof esperado === "number") ok = typeof obtenido === "number" && Math.abs(esperado - obtenido) < 0.005;
+      else ok = esperado === obtenido;
+      RESULTADOS.push({ id: id, descripcion: descripcion, esperado: esperado, obtenido: obtenido, ok: ok });
+    }
+    const HOY = "2026-10-21";
+    function cerrarDia(fecha, kg) {
+      const r = Almacen.nuevoReparto(fecha, Almacen.obtenerTiendas());
+      r.lineas[0].entregados = kg; r.lineas[0].sobrantes = "0";
+      Almacen.guardarReparto(r); Almacen.cerrarReparto(fecha);
+    }
+    const OK_LIB = { tiendas: "170", frios: "0", rancho: "0", fiado: "" };
+
+    function ejecutarPruebasCopia() {
+      RESULTADOS.length = 0;
+
+      // Un estado con repartos, personas, cobros y una comparación con la libreta
+      const mem = new MemoriaFalsa();
+      Almacen.usarBackend(mem);
+      Almacen.agregarPersona("Juan", 12);
+      cerrarDia("2026-10-19", "10");
+      cerrarDia("2026-10-20", "20");
+      Almacen.guardarParalelo("2026-10-19", OK_LIB, "nota");
+      prueba("U1", "Antes de guardar copia no hay ninguna", null, Almacen.obtenerCopiaPrevia());
+      prueba("U2", "Guardar copia devuelve confirmación", true, Almacen.guardarCopiaPrevia("antes de borrar"));
+      const c = Almacen.obtenerCopiaPrevia();
+      prueba("U3", "La copia recuerda el motivo", "antes de borrar", c.motivo);
+      prueba("U4", "La copia trae los 2 repartos", 2, Object.keys(c.datos.repartos).length);
+      prueba("U5", "La copia trae las comparaciones con la libreta (1)", 1, c.paralelo.length);
+      prueba("U6", "La copia trae la fecha y hora", true, typeof c.guardadoEn === "string" && c.guardadoEn.length > 10);
+
+      // Borrar y deshacer
+      Almacen.borrarHistorial();
+      prueba("U7", "Después de borrar no quedan repartos", 0, Almacen.listarFechas().length);
+      prueba("U8", "Después de borrar no quedan comparaciones", 0, Almacen.listarParalelo().length);
+      prueba("U9", "La copia para deshacer SOBREVIVE al borrado", true, Almacen.obtenerCopiaPrevia() !== null);
+      const r = Almacen.deshacerCopiaPrevia();
+      prueba("U10", "Deshacer informa el motivo", "antes de borrar", r.motivo);
+      prueba("U11", "Deshacer: vuelven los 2 repartos", 2, Almacen.listarFechas().length);
+      prueba("U12", "Deshacer: vuelven los totales (10 kg x $17 = $170 el día 19)", 170, Almacen.resumenDe(Almacen.obtenerReparto("2026-10-19")).total);
+      prueba("U13", "Deshacer: vuelve la persona", 1, Almacen.obtenerPersonas().length);
+      prueba("U14", "Deshacer: vuelve la comparación con la libreta", "coincide", Almacen.evaluarParalelo("2026-10-19").estado);
+      prueba("U15", "Después de deshacer, la copia sigue disponible", true, Almacen.obtenerCopiaPrevia() !== null);
+
+      // Restaurar un respaldo distinto y deshacer
+      const otra = new MemoriaFalsa();
+      Almacen.usarBackend(otra);
+      const vacio = Almacen.exportarTodo();
+      Almacen.usarBackend(mem);
+      Almacen.guardarCopiaPrevia("antes de restaurar un respaldo");
+      Almacen.restaurarTodo(JSON.parse(JSON.stringify(vacio)));
+      prueba("U16", "Restaurar un respaldo vacío deja 0 repartos", 0, Almacen.listarFechas().length);
+      prueba("U17", "…y la copia para deshacer sigue ahí", true, Almacen.obtenerCopiaPrevia() !== null);
+      Almacen.deshacerCopiaPrevia();
+      prueba("U18", "Deshacer la restauración devuelve los 2 repartos", 2, Almacen.listarFechas().length);
+
+      // La copia no forma parte del respaldo ni se copia a sí misma
+      const resp = Almacen.exportarTodo();
+      prueba("U19", "El respaldo completo NO incluye la copia para deshacer", false, "copiaPrevia" in resp);
+      Almacen.guardarCopiaPrevia("otra vez");
+      prueba("U20", "Una copia nueva no arrastra a la anterior dentro de sí misma", false, "copiaPrevia" in Almacen.obtenerCopiaPrevia().datos);
+      prueba("U21", "Solo se guarda la última copia (motivo nuevo)", "otra vez", Almacen.obtenerCopiaPrevia().motivo);
+
+      // Deshacer el deshacer: tras deshacer queda una copia de lo que había antes de deshacer
+      const mu = new MemoriaFalsa();
+      Almacen.usarBackend(mu);
+      cerrarDia("2026-10-19", "10");
+      Almacen.guardarCopiaPrevia("estado A (1 reparto)");
+      cerrarDia("2026-10-20", "20");
+      Almacen.deshacerCopiaPrevia();
+      prueba("U28", "Deshacer devuelve al estado A (1 reparto)", 1, Almacen.listarFechas().length);
+      prueba("U29", "Tras deshacer queda una copia 'antes de deshacer'", "antes de deshacer", Almacen.obtenerCopiaPrevia().motivo);
+      Almacen.deshacerCopiaPrevia();
+      prueba("U30", "Deshacer otra vez vuelve al estado con 2 repartos", 2, Almacen.listarFechas().length);
+
+      // Sin copia, no se puede deshacer
+      Almacen.usarBackend(new MemoriaFalsa());
+      prueba("U22", "Deshacer sin copia: error claro", true, lanza(function () { Almacen.deshacerCopiaPrevia(); }));
+
+      // Memoria llena: la copia NO se guarda y lo dice (para que la acción peligrosa se cancele)
+      const llena = new MemoriaLlena();
+      Almacen.usarBackend(llena);
+      Almacen.agregarPersona("Ana", 13);
+      llena.llena = true;
+      prueba("U23", "Memoria llena: guardar la copia devuelve false", false, Almacen.guardarCopiaPrevia("x"));
+      prueba("U24", "Memoria llena: no queda una copia a medias", null, Almacen.obtenerCopiaPrevia());
+
+      // Una copia dañada no rompe nada
+      const m2 = new MemoriaFalsa();
+      Almacen.usarBackend(m2);
+      m2.setItem("tortilleria:copiaPrevia", "{no es json");
+      prueba("U25", "Copia dañada: se trata como 'no hay copia'", null, Almacen.obtenerCopiaPrevia());
+      prueba("U26", "Copia dañada: deshacer da error claro", true, lanza(function () { Almacen.deshacerCopiaPrevia(); }));
+
+      // Restaurar falla a medias: la copia previa no se pierde
+      Almacen.usarBackend(new MemoriaFalsa());
+      Almacen.agregarPersona("Luis", 12);
+      Almacen.guardarCopiaPrevia("antes");
+      prueba("U27", "Restaurar un respaldo inválido no borra la copia para deshacer", true,
+        (function () { try { Almacen.restaurarTodo({ aplicacion: "tortilleria", version: 99 }); } catch (e) { /* esperado */ } return Almacen.obtenerCopiaPrevia() !== null; })());
+
+      Almacen.usarBackend(null);
+      return RESULTADOS.slice();
+    }
+    // ===== MARCA-FIN-PRUEBAS =====
+
+    const resultados = ejecutarPruebasCopia();
+    const filas = document.getElementById("filas");
+    let correctas = 0;
+    resultados.forEach(function (r) {
+      if (r.ok) correctas += 1;
+      const tr = document.createElement("tr");
+      tr.className = r.ok ? "ok" : "falla";
+      [r.id, r.descripcion, String(r.esperado).slice(0, 70), String(r.obtenido).slice(0, 70), r.ok ? "OK" : "FALLA"].forEach(function (texto) {
+        const td = document.createElement("td");
+        td.textContent = texto;
+        tr.appendChild(td);
+      });
+      filas.appendChild(tr);
+    });
+    const resumen = document.getElementById("resumen");
+    resumen.textContent = correctas + " de " + resultados.length + " pruebas correctas";
+    resumen.className = correctas === resultados.length ? "bien" : "mal";
+  </script>
+</body>
+</html>

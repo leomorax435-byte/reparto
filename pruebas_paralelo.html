@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pruebas de la comparación con la libreta</title>
+  <style>
+    body { font-family: Arial, sans-serif; max-width: 900px; margin: 24px auto; padding: 0 16px; color: #1f2933; }
+    h1 { font-size: 22px; margin-bottom: 4px; }
+    p.nota { color: #52606d; margin-top: 0; }
+    #resumen { font-size: 18px; font-weight: bold; padding: 12px 16px; border-radius: 6px; margin: 16px 0; }
+    #resumen.bien { background: #d9f2e0; color: #11602c; }
+    #resumen.mal { background: #fbdada; color: #8a1c1c; }
+    table { border-collapse: collapse; width: 100%; font-size: 14px; }
+    th, td { border: 1px solid #cbd2d9; padding: 6px 8px; text-align: left; }
+    th { background: #1f4e78; color: #fff; }
+    tr.ok td:last-child { color: #11602c; font-weight: bold; }
+    tr.falla { background: #fbdada; }
+    tr.falla td:last-child { color: #8a1c1c; font-weight: bold; }
+  </style>
+</head>
+<body>
+  <h1>Pruebas de la comparación con la libreta</h1>
+  <p class="nota">Usan una memoria de mentira: no tocan tus datos reales.</p>
+  <div id="resumen"></div>
+  <table>
+    <thead><tr><th>Prueba</th><th>Qué comprueba</th><th>Esperado</th><th>Obtenido</th><th>Resultado</th></tr></thead>
+    <tbody id="filas"></tbody>
+  </table>
+
+  <script src="logica.js"></script>
+  <script src="logica_rancho.js"></script>
+  <script src="logica_cuentas.js"></script>
+  <script src="logica_paralelo.js"></script>
+  <script src="almacenamiento.js"></script>
+  <script>
+    // ===== MARCA-INICIO-PRUEBAS =====
+    function MemoriaFalsa() {
+      this.datos = {};
+      this.getItem = function (k) { return Object.prototype.hasOwnProperty.call(this.datos, k) ? this.datos[k] : null; };
+      this.setItem = function (k, v) { this.datos[k] = String(v); };
+      this.removeItem = function (k) { delete this.datos[k]; };
+      this.key = function (i) { return Object.keys(this.datos)[i] || null; };
+      Object.defineProperty(this, "length", { get: function () { return Object.keys(this.datos).length; } });
+    }
+    function lanza(f) { try { f(); return false; } catch (e) { return true; } }
+    function mensaje(f) { try { f(); return ""; } catch (e) { return e.message; } }
+
+    const RESULTADOS = [];
+    function prueba(id, descripcion, esperado, obtenido) {
+      let ok;
+      if (typeof esperado === "number") ok = typeof obtenido === "number" && Math.abs(esperado - obtenido) < 0.005;
+      else ok = esperado === obtenido;
+      RESULTADOS.push({ id: id, descripcion: descripcion, esperado: esperado, obtenido: obtenido, ok: ok });
+    }
+    const LP = LogicaParalelo;
+    const APP = { tiendas: 908, frios: 3, rancho: 1079, fiado: 437 };
+    const lib = function (cambios) {
+      const base = { tiendas: "908", frios: "3", rancho: "1079", fiado: "437" };
+      Object.keys(cambios || {}).forEach(function (k) { base[k] = cambios[k]; });
+      return base;
+    };
+    const campo = function (r, clave) { return r.campos.filter(function (c) { return c.clave === clave; })[0]; };
+
+    // Un día cerrado: tiendas $170 (Tienda 1: 10/0) y rancho $320 (16 kg de caliente a $20; Juan se lleva 4 fiados = $80)
+    function lin(id, personaId, nombre, producto, kg, precio) { return { id: id, personaId: personaId, nombre: nombre, producto: producto, kg: kg, precio: precio }; }
+    function cerrarDia(fecha) {
+      const r = Almacen.nuevoReparto(fecha, Almacen.obtenerTiendas());
+      r.lineas[0].entregados = "10"; r.lineas[0].sobrantes = "0";
+      Almacen.guardarReparto(r); Almacen.cerrarReparto(fecha);
+      const rn = Almacen.nuevoRancho(fecha);
+      rn.caliente = { llevados: "20", regresan: "0" };
+      rn.fiados = [lin(1, 1, "Juan", "caliente", "4", 20)];
+      Almacen.guardarRancho(rn); Almacen.cerrarRancho(fecha);
+    }
+    const OK_LIB = { tiendas: "170", frios: "0", rancho: "320", fiado: "80" };
+
+    function ejecutarPruebasParalelo() {
+      RESULTADOS.length = 0;
+
+      // ===== A. Comparar un día =====
+      let r = LP.comparar(APP, lib());
+      prueba("A1", "Todo igual: coincide", true, r.coincide);
+      prueba("A2", "Todo igual: está completo", true, r.completo);
+      r = LP.comparar(APP, lib({ tiendas: "898" }));
+      prueba("A3", "Tiendas $10 menos en la libreta: no coincide", false, r.coincide);
+      prueba("A4", "…la diferencia es -$10 (libreta - app)", -10, campo(r, "tiendas").diferencia);
+      prueba("A5", "…pero el día está completo", true, r.completo);
+      r = LP.comparar(APP, lib({ rancho: "1089.50" }));
+      prueba("A6", "Rancho con $10.50 de más: diferencia +10.50", 10.5, campo(r, "rancho").diferencia);
+      r = LP.comparar(APP, lib({ fiado: "" }));
+      prueba("A7", "El fiado es opcional: vacío sigue coincidiendo", true, r.coincide);
+      prueba("A8", "…y queda como 'Sin dato'", "Sin dato", campo(r, "fiado").estado);
+      r = LP.comparar(APP, lib({ fiado: "400" }));
+      prueba("A9", "Si se escribe el fiado y no coincide, el día no coincide", false, r.coincide);
+      r = LP.comparar(APP, lib({ tiendas: "" }));
+      prueba("A10", "Falta el total de tiendas: incompleto", false, r.completo);
+      prueba("A11", "…el campo dice 'Falta'", "Falta", campo(r, "tiendas").estado);
+      r = LP.comparar(APP, lib({ frios: "abc" }));
+      prueba("A12", "Texto en fríos: 'No es número'", "No es número", campo(r, "frios").estado);
+      prueba("A13", "…y no coincide", false, r.coincide);
+      r = LP.comparar(APP, lib({ rancho: "-5" }));
+      prueba("A14", "Negativo no se acepta", "Negativo", campo(r, "rancho").estado);
+      r = LP.comparar(APP, lib({ tiendas: "908,5" }));
+      prueba("A15", "Coma decimal no es número", "No es número", campo(r, "tiendas").estado);
+      r = LP.comparar({ tiendas: 100.1, frios: 3.5, rancho: 0, fiado: 0 }, { tiendas: "100.1", frios: "3.5", rancho: "0", fiado: "" });
+      prueba("A16", "Decimales: $100.10 y 3.5 kg coinciden", true, r.coincide);
+      r = LP.comparar({ tiendas: 100, frios: 3.5, rancho: 0, fiado: 0 }, { tiendas: "100", frios: "3.4", rancho: "0", fiado: "" });
+      prueba("A17", "Fríos 3.4 contra 3.5: diferencia -0.1", -0.1, campo(r, "frios").diferencia);
+      r = LP.comparar({ tiendas: 100, frios: 0, rancho: 0, fiado: 0 }, { tiendas: "100", frios: "0", rancho: "0", fiado: "" });
+      prueba("A18", "Un día sin rancho: 0 contra 0 coincide", true, r.coincide);
+      r = LP.comparar(APP, lib({ tiendas: 908, frios: 3, rancho: 1079, fiado: 437 }));
+      prueba("A19", "También acepta números (no solo texto)", true, r.coincide);
+      r = LP.comparar(APP, lib({ tiendas: "908.004" }));
+      prueba("A20", "Una diferencia menor a medio centavo cuenta como coincidencia", true, r.coincide);
+
+      // ===== B. Racha de días seguidos =====
+      const ev = function (txt) { return txt.split(",").filter(Boolean).map(function (e) { return { estado: e }; }); };
+      prueba("B1", "Sin comparaciones: racha 0", 0, LP.resumir([]).racha);
+      prueba("B2", "3 días que coinciden: racha 3", 3, LP.resumir(ev("coincide,coincide,coincide")).racha);
+      prueba("B3", "Una diferencia reciente rompe la racha", 0, LP.resumir(ev("diferencia,coincide,coincide")).racha);
+      prueba("B4", "La racha cuenta desde el día más reciente (2 antes de la diferencia)", 2, LP.resumir(ev("coincide,coincide,diferencia,coincide")).racha);
+      prueba("B5", "Un día pendiente (sin cerrar) corta la racha", 1, LP.resumir(ev("coincide,pendiente,coincide")).racha);
+      const diez = LP.resumir(ev("coincide,coincide,coincide,coincide,coincide,coincide,coincide,coincide,coincide,coincide"));
+      prueba("B6", "10 seguidos: meta cumplida", true, diez.cumplida);
+      prueba("B7", "9 seguidos: meta NO cumplida", false, LP.resumir(ev("coincide,coincide,coincide,coincide,coincide,coincide,coincide,coincide,coincide")).cumplida);
+      const mix = LP.resumir(ev("coincide,diferencia,pendiente,coincide"));
+      prueba("B8", "Conteo: 2 coinciden, 1 con diferencia, 1 pendiente, 4 en total", "2-1-1-4", mix.coinciden + "-" + mix.conDiferencia + "-" + mix.pendientes + "-" + mix.total);
+      prueba("B9", "La meta sugerida es 10 días", 10, LP.META_DIAS);
+
+      // ===== C. Valores de la app de un día =====
+      Almacen.usarBackend(new MemoriaFalsa());
+      Almacen.agregarPersona("Juan", 12);
+      cerrarDia("2026-10-19");
+      const v = Almacen.valoresApp("2026-10-19");
+      prueba("C1", "App: total de tiendas ($170)", 170, v.tiendas);
+      prueba("C2", "App: kg fríos (0)", 0, v.frios);
+      prueba("C3", "App: total del rancho (16 kg x $20 = $320)", 320, v.rancho);
+      prueba("C4", "App: fiado del día (4 kg x $20 = $80)", 80, v.fiado);
+
+      // ===== D. Guardar y evaluar =====
+      Almacen.guardarParalelo("2026-10-19", OK_LIB, "  todo igual  ");
+      const e = Almacen.evaluarParalelo("2026-10-19");
+      prueba("D1", "Comparación guardada: coincide", "coincide", e.estado);
+      prueba("D2", "La nota se guarda sin espacios sobrantes", "todo igual", e.registro.nota);
+      prueba("D3", "Un día sin comparación devuelve nada", null, Almacen.evaluarParalelo("2026-10-20"));
+      Almacen.guardarParalelo("2026-10-19", { tiendas: "160", frios: "0", rancho: "320", fiado: "" }, "me equivoqué en una tienda");
+      prueba("D4", "Se puede volver a guardar el mismo día (no duplica)", 1, Almacen.listarParalelo().length);
+      prueba("D5", "Ahora hay diferencia", "diferencia", Almacen.evaluarParalelo("2026-10-19").estado);
+      prueba("D6", "La diferencia de tiendas es -$10", -10, campo(Almacen.evaluarParalelo("2026-10-19").comparacion, "tiendas").diferencia);
+      Almacen.guardarParalelo("2026-10-19", OK_LIB, "");
+      prueba("D7", "El fiado vacío se guarda como 'sin dato'", null,
+        (function () { Almacen.guardarParalelo("2026-10-19", { tiendas: "170", frios: "0", rancho: "320", fiado: "" }, ""); return Almacen.obtenerParalelo("2026-10-19").libreta.fiado; })());
+      Almacen.guardarParalelo("2026-10-19", OK_LIB, "");
+
+      // ===== E. Reglas de protección =====
+      prueba("E1", "No compara un día sin datos", true, lanza(function () { Almacen.guardarParalelo("2026-11-01", OK_LIB, ""); }));
+      const r2 = Almacen.nuevoReparto("2026-10-20", Almacen.obtenerTiendas());
+      r2.lineas[0].entregados = "10"; r2.lineas[0].sobrantes = "0";
+      Almacen.guardarReparto(r2);
+      prueba("E2", "No compara un día con el reparto sin cerrar", true, lanza(function () { Almacen.guardarParalelo("2026-10-20", OK_LIB, ""); }));
+      prueba("E3", "…y el mensaje pide cerrar primero", true, mensaje(function () { Almacen.guardarParalelo("2026-10-20", OK_LIB, ""); }).indexOf("cierra") >= 0);
+      prueba("E4", "Texto en un campo: se rechaza", true, lanza(function () { Almacen.guardarParalelo("2026-10-19", { tiendas: "abc", frios: "0", rancho: "320", fiado: "" }, ""); }));
+      prueba("E5", "Falta un campo obligatorio: se rechaza", true, lanza(function () { Almacen.guardarParalelo("2026-10-19", { tiendas: "170", frios: "", rancho: "320", fiado: "" }, ""); }));
+      prueba("E6", "Nota demasiado larga: se rechaza", true, lanza(function () { Almacen.guardarParalelo("2026-10-19", OK_LIB, new Array(200).join("x")); }));
+      prueba("E7", "Fecha inexistente: se rechaza", true, lanza(function () { Almacen.guardarParalelo("2026-02-30", OK_LIB, ""); }));
+      prueba("E8", "Tras los rechazos, lo guardado sigue igual (coincide)", "coincide", Almacen.evaluarParalelo("2026-10-19").estado);
+
+      // ===== F. Cambios posteriores en la app =====
+      Almacen.reabrirRancho("2026-10-19");
+      prueba("F1", "Si se reabre el rancho, la comparación queda 'pendiente'", "pendiente", Almacen.evaluarParalelo("2026-10-19").estado);
+      Almacen.cerrarRancho("2026-10-19");
+      prueba("F2", "Al cerrar de nuevo, vuelve a coincidir", "coincide", Almacen.evaluarParalelo("2026-10-19").estado);
+      Almacen.reabrirRancho("2026-10-19");
+      const rn = Almacen.obtenerRancho("2026-10-19");
+      rn.fiados[0].kg = "3";
+      Almacen.guardarRancho(rn); Almacen.cerrarRancho("2026-10-19");
+      prueba("F3", "Si cambian las cuentas de la app, la comparación lo detecta (diferencia)", "diferencia", Almacen.evaluarParalelo("2026-10-19").estado);
+      prueba("F4", "…el fiado de la app ahora es $60 (diferencia +$20)", 20, campo(Almacen.evaluarParalelo("2026-10-19").comparacion, "fiado").diferencia);
+
+      // ===== G. Varios días y racha =====
+      Almacen.usarBackend(new MemoriaFalsa());
+      Almacen.agregarPersona("Juan", 12);
+      ["2026-10-19", "2026-10-20", "2026-10-21"].forEach(function (f) { cerrarDia(f); });
+      Almacen.guardarParalelo("2026-10-19", OK_LIB, "");
+      Almacen.guardarParalelo("2026-10-20", OK_LIB, "");
+      Almacen.guardarParalelo("2026-10-21", { tiendas: "165", frios: "0", rancho: "320", fiado: "" }, "diferencia de $5 en tienda 3");
+      let rs = Almacen.resumenParalelo();
+      prueba("G1", "3 días comparados", 3, rs.total);
+      prueba("G2", "El más reciente primero", "2026-10-21", Almacen.listarParalelo()[0].fecha);
+      prueba("G3", "Un día reciente con diferencia: racha 0", 0, rs.racha);
+      prueba("G4", "2 coinciden y 1 tiene diferencia", "2-1", rs.coinciden + "-" + rs.conDiferencia);
+      Almacen.guardarParalelo("2026-10-21", OK_LIB, "corregido");
+      rs = Almacen.resumenParalelo();
+      prueba("G5", "Tras corregir, racha 3", 3, rs.racha);
+      prueba("G6", "Con 3 de 10 la meta no está cumplida", false, rs.cumplida);
+      Almacen.quitarParalelo("2026-10-21");
+      prueba("G7", "Quitar una comparación la elimina", 2, Almacen.listarParalelo().length);
+
+      // ===== H. Exportación y respaldo =====
+      Almacen.guardarParalelo("2026-10-21", { tiendas: "165", frios: "0", rancho: "320", fiado: "" }, "nota, con coma");
+      const csv = Almacen.aCSVParalelo().replace("\uFEFF", "").trim().split("\r\n");
+      prueba("H1", "CSV: encabezado", "fecha,estado,libreta_tiendas,app_tiendas,dif_tiendas,libreta_frios_kg,app_frios_kg,dif_frios_kg,libreta_rancho,app_rancho,dif_rancho,libreta_fiado,app_fiado,dif_fiado,nota", csv[0]);
+      prueba("H2", "CSV: día que coincide", "2026-10-19,coincide,170,170,0,0,0,0,320,320,0,80,80,0,", csv[1]);
+      prueba("H3", "CSV: día con diferencia (-5) y nota entrecomillada", '2026-10-21,diferencia,165,170,-5,0,0,0,320,320,0,,80,,"nota, con coma"', csv[3]);
+      prueba("H4", "CSV: empieza con marca UTF-8", true, Almacen.aCSVParalelo().charCodeAt(0) === 0xFEFF);
+      prueba("H5", "El respaldo completo NO incluye las comparaciones", false, "paralelo" in Almacen.exportarTodo());
+      const resp = Almacen.exportarTodo();
+      Almacen.restaurarTodo(JSON.parse(JSON.stringify(resp)));
+      prueba("H6", "Restaurar un respaldo no borra las comparaciones", 3, Almacen.listarParalelo().length);
+
+      // ===== I. Empezar con datos reales =====
+      Almacen.usarBackend(new MemoriaFalsa());
+      Almacen.agregarPersona("Juan", 12);
+      cerrarDia("2026-10-19");
+      Almacen.registrarCobro(1, "2026-10-20", "30", "", "2026-10-21");
+      Almacen.guardarParalelo("2026-10-19", OK_LIB, "");
+      Almacen.marcarRespaldoHecho();
+      const respaldoAntes = Almacen.obtenerUltimoRespaldo();
+      const borrados = Almacen.borrarHistorial();
+      prueba("I1", "Borrar historial: devuelve cuántos registros quitó (reparto, rancho, cobros y comparación = 4)", 4, borrados);
+      prueba("I2", "Borrar historial: ya no hay repartos", 0, Almacen.listarFechas().length);
+      prueba("I3", "Borrar historial: ya no hay ranchos", 0, Almacen.listarFechasRancho().length);
+      prueba("I4", "Borrar historial: ya no hay cobros", 0, Almacen.obtenerCobros().length);
+      prueba("I5", "Borrar historial: ya no hay comparaciones", 0, Almacen.listarParalelo().length);
+      prueba("I6", "Se conservan las tiendas", 15, Almacen.obtenerTiendas().length);
+      prueba("I7", "Se conservan las personas", 1, Almacen.obtenerPersonas().length);
+      prueba("I8", "Se conservan los precios del rancho", 20, Almacen.obtenerPreciosRancho().caliente);
+      prueba("I9", "Se conserva la fecha del último respaldo", respaldoAntes, Almacen.obtenerUltimoRespaldo());
+      prueba("I10", "Tras borrar, no queda deuda de la persona", 0, Almacen.cuentaDe(1, "2026-10-21").cuenta.saldo);
+      prueba("I11", "Borrar otra vez no falla (0 registros)", 0, Almacen.borrarHistorial());
+
+      Almacen.usarBackend(null);
+      return RESULTADOS.slice();
+    }
+    // ===== MARCA-FIN-PRUEBAS =====
+
+    const resultados = ejecutarPruebasParalelo();
+    const filas = document.getElementById("filas");
+    let correctas = 0;
+    resultados.forEach(function (r) {
+      if (r.ok) correctas += 1;
+      const tr = document.createElement("tr");
+      tr.className = r.ok ? "ok" : "falla";
+      [r.id, r.descripcion, String(r.esperado).slice(0, 70), String(r.obtenido).slice(0, 70), r.ok ? "OK" : "FALLA"].forEach(function (texto) {
+        const td = document.createElement("td");
+        td.textContent = texto;
+        tr.appendChild(td);
+      });
+      filas.appendChild(tr);
+    });
+    const resumen = document.getElementById("resumen");
+    resumen.textContent = correctas + " de " + resultados.length + " pruebas correctas";
+    resumen.className = correctas === resultados.length ? "bien" : "mal";
+  </script>
+</body>
+</html>

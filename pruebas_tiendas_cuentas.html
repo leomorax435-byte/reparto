@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pruebas de las cuentas de tiendas</title>
+  <style>
+    body { font-family: Arial, sans-serif; max-width: 900px; margin: 24px auto; padding: 0 16px; color: #1f2933; }
+    h1 { font-size: 22px; margin-bottom: 4px; }
+    p.nota { color: #52606d; margin-top: 0; }
+    #resumen { font-size: 18px; font-weight: bold; padding: 12px 16px; border-radius: 6px; margin: 16px 0; }
+    #resumen.bien { background: #d9f2e0; color: #11602c; }
+    #resumen.mal { background: #fbdada; color: #8a1c1c; }
+    table { border-collapse: collapse; width: 100%; font-size: 14px; }
+    th, td { border: 1px solid #cbd2d9; padding: 6px 8px; text-align: left; }
+    th { background: #1f4e78; color: #fff; }
+    tr.ok td:last-child { color: #11602c; font-weight: bold; }
+    tr.falla { background: #fbdada; }
+    tr.falla td:last-child { color: #8a1c1c; font-weight: bold; }
+  </style>
+</head>
+<body>
+  <h1>Pruebas de las cuentas de tiendas</h1>
+  <p class="nota">Tiendas que van acumulando lo no cobrado día por día, sus pagos, respaldo y exportación. Usan una memoria de mentira: no tocan tus datos reales.</p>
+  <div id="resumen"></div>
+  <table>
+    <thead><tr><th>Prueba</th><th>Qué comprueba</th><th>Esperado</th><th>Obtenido</th><th>Resultado</th></tr></thead>
+    <tbody id="filas"></tbody>
+  </table>
+
+  <script src="logica.js"></script>
+  <script src="logica_rancho.js"></script>
+  <script src="logica_cuentas.js"></script>
+  <script src="logica_paralelo.js"></script>
+  <script src="almacenamiento.js"></script>
+  <script>
+    // ===== MARCA-INICIO-PRUEBAS =====
+    function MemoriaFalsa() {
+      this.datos = {};
+      this.escrituras = 0;
+      this.getItem = function (k) { return Object.prototype.hasOwnProperty.call(this.datos, k) ? this.datos[k] : null; };
+      this.setItem = function (k, v) { this.escrituras += 1; this.datos[k] = String(v); };
+      this.removeItem = function (k) { delete this.datos[k]; };
+      this.key = function (i) { return Object.keys(this.datos)[i] || null; };
+      Object.defineProperty(this, "length", { get: function () { return Object.keys(this.datos).length; } });
+    }
+    function MemoriaQueFallaEn(n) {
+      MemoriaFalsa.call(this);
+      let cuenta = 0;
+      const original = this.setItem;
+      this.activarFallo = false;
+      this.setItem = function (k, v) {
+        if (this.activarFallo) { cuenta += 1; if (cuenta === n) throw new Error("memoria llena"); }
+        original.call(this, k, v);
+      };
+    }
+    function lanza(f) { try { f(); return false; } catch (e) { return true; } }
+    function mensaje(f) { try { f(); return ""; } catch (e) { return e.message; } }
+    function clonar(o) { return JSON.parse(JSON.stringify(o)); }
+
+    const RESULTADOS = [];
+    function prueba(id, descripcion, esperado, obtenido) {
+      let ok;
+      if (typeof esperado === "number") ok = typeof obtenido === "number" && Math.abs(esperado - obtenido) < 0.005;
+      else ok = esperado === obtenido;
+      RESULTADOS.push({ id: id, descripcion: descripcion, esperado: esperado, obtenido: obtenido, ok: ok });
+    }
+
+    const HOY = "2026-10-21";
+    function poner(r, i, v) {
+      const l = r.lineas[i];
+      l.entregados = v.e || ""; l.extras = v.x || ""; l.devoluciones = v.d || ""; l.sobrantes = v.s === undefined ? "" : v.s;
+    }
+    // Tienda 2 es de cobro quincenal; la Tienda 3 cierra temprano el día 20 (se desmarca a mano).
+    //  19/10: T1 10 kg (se cobra $170). T2: 25 + 5 extras - 3 devueltas - 1 fría = 26 kg x $18 = $468 (sin cobrar)
+    //  20/10: T1 10 kg. T2: 20 kg x $18 = $360 (sin cobrar). T3: 8 kg x $18 = $144 (sin cobrar, cierra temprano)
+    //  21/10 (reparto ABIERTO): T2: 10 kg x $18 = $180 (todavía no cuenta)
+    function armarCaso() {
+      const mem = new MemoriaFalsa();
+      Almacen.usarBackend(mem);
+      Almacen.editarTienda(2, "Tienda 2", 18, true);
+      const tiendas = Almacen.obtenerTiendas();
+      let r = Almacen.nuevoReparto("2026-10-19", tiendas);
+      poner(r, 0, { e: "10", s: "0" }); poner(r, 1, { e: "25", x: "5", d: "3", s: "1" });
+      Almacen.guardarReparto(r); Almacen.cerrarReparto("2026-10-19");
+      r = Almacen.nuevoReparto("2026-10-20", tiendas);
+      poner(r, 0, { e: "10", s: "0" }); poner(r, 1, { e: "20", s: "0" }); poner(r, 2, { e: "8", s: "0" });
+      r.lineas[2].cobrar = false; r.lineas[2].cobrarManual = true;
+      Almacen.guardarReparto(r); Almacen.cerrarReparto("2026-10-20");
+      r = Almacen.nuevoReparto("2026-10-21", tiendas);
+      poner(r, 1, { e: "10", s: "0" });
+      Almacen.guardarReparto(r);
+      return mem;
+    }
+
+    function ejecutarPruebasTiendasCuentas() {
+      RESULTADOS.length = 0;
+
+      // ================= LA CUENTA DE UNA TIENDA =================
+      let mem = armarCaso();
+      let t2 = Almacen.cuentaDe ? Almacen.cuentaDeTienda(2, HOY) : null;
+      prueba("TC1", "Tienda 2: total sin cobrar ($468 + $360)", 828, t2.cuenta.totalFiado);
+      prueba("TC2", "Tienda 2: saldo", 828, t2.cuenta.saldo);
+      prueba("TC3", "Tienda 2: un movimiento por cada día sin cobrar (2)", 2, t2.cuenta.movimientos.length);
+      const m19 = t2.cuenta.movimientos[0];
+      prueba("TC4", "Día 19: mañana 25, extras 5, devoluciones 3, fría 1", "25-5-3-1", m19.detalle.manana + "-" + m19.detalle.extras + "-" + m19.detalle.devoluciones + "-" + m19.detalle.frios);
+      prueba("TC5", "Día 19: 30 kg entregados (las devoluciones no se restan)", 30, m19.detalle.entregados);
+      prueba("TC6", "Día 19: kg netos 30 - 1 - 3 = 26", 26, m19.kg);
+      prueba("TC7", "Día 19: importe 26 x $18 = $468", 468, m19.monto);
+      prueba("TC8", "Día 20: $360", 360, t2.cuenta.movimientos[1].monto);
+      prueba("TC9", "Saldo corrido después del día 20", 828, t2.cuenta.movimientos[1].saldoDespues);
+      prueba("TC10", "El día 21 (reparto abierto) aparece 'por confirmar' y no suma", "1-828", t2.porConfirmar.length + "-" + t2.cuenta.saldo);
+      prueba("TC11", "Antigüedad: desde el 19/10 son 2 días", 2, t2.cuenta.diasAntiguedad);
+      prueba("TC12", "Segmento 'hasta 7 días'", "reciente", t2.cuenta.segmento);
+      const cuentas = Almacen.cuentasDeTiendas(HOY);
+      prueba("TC13", "Solo aparecen tiendas con días sin cobrar (Tienda 2 y Tienda 3)", "Tienda 2,Tienda 3", cuentas.map(function (c) { return c.nombre; }).join(","));
+      prueba("TC14", "La Tienda 1 (se cobra todos los días) no tiene cuenta", false, cuentas.some(function (c) { return c.tiendaId === 1; }));
+      const t3 = Almacen.cuentaDeTienda(3, HOY);
+      prueba("TC15", "Tienda 3 cerró temprano el 20/10: $144 sin cobrar", 144, t3.cuenta.saldo);
+      prueba("TC16", "Una tienda sin movimientos: saldo 0 y sin movimientos", "0-0", Almacen.cuentaDeTienda(5, HOY).cuenta.saldo + "-" + Almacen.cuentaDeTienda(5, HOY).cuenta.movimientos.length);
+      prueba("TC17", "Tienda inexistente: error", true, lanza(function () { Almacen.cuentaDeTienda(99, HOY); }));
+      prueba("TC18", "La fría de una tienda sin cobro se suma normal para el rancho (1 kg del día 19)", 1, Almacen.friaDeTiendas("2026-10-19").kg);
+
+      // ================= COBROS DE TIENDAS =================
+      const cobro = Almacen.registrarCobroTienda(2, "2026-10-21", "500", "  efectivo  ", HOY);
+      prueba("TP1", "Registrar cobro: recibe el número 1", 1, cobro.id);
+      prueba("TP2", "Registrar cobro: nota sin espacios", "efectivo", cobro.nota);
+      prueba("TP3", "Saldo tras cobrar $500", 328, Almacen.cuentaDeTienda(2, HOY).cuenta.saldo);
+      const movs = Almacen.cuentaDeTienda(2, HOY).cuenta.movimientos;
+      prueba("TP4", "El pago aparece como último movimiento", "cobro", movs[movs.length - 1].tipo);
+      prueba("TP5", "Saldo corrido: antes del pago $828, después $328", "828-328", movs[1].saldoDespues + "-" + movs[2].saldoDespues);
+      prueba("TP6", "El pago no cambia el total sin cobrar ($828)", 828, Almacen.cuentaDeTienda(2, HOY).cuenta.totalFiado);
+      Almacen.usarBackend(null); Almacen.usarBackend(mem);
+      prueba("TP7", "Tras 'cerrar y abrir', el cobro sigue", 328, Almacen.cuentaDeTienda(2, HOY).cuenta.saldo);
+      const n0 = Almacen.obtenerCobrosTiendas().length;
+      prueba("TP8", "No deja cobrar más que el saldo", true, lanza(function () { Almacen.registrarCobroTienda(2, "2026-10-21", "328.01", "", HOY); }));
+      prueba("TP9", "…y el mensaje dice cuánto debe", true, mensaje(function () { Almacen.registrarCobroTienda(2, "2026-10-21", "1000", "", HOY); }).indexOf("$328.00") >= 0);
+      prueba("TP10", "Tienda inexistente", true, lanza(function () { Almacen.registrarCobroTienda(99, "2026-10-21", "10", "", HOY); }));
+      prueba("TP11", "Fecha inexistente", true, lanza(function () { Almacen.registrarCobroTienda(2, "2026-02-30", "10", "", HOY); }));
+      prueba("TP12", "Monto con coma", true, lanza(function () { Almacen.registrarCobroTienda(2, "2026-10-21", "10,5", "", HOY); }));
+      prueba("TP13", "Monto 0", true, lanza(function () { Almacen.registrarCobroTienda(2, "2026-10-21", "0", "", HOY); }));
+      prueba("TP14", "Nota demasiado larga", true, lanza(function () { Almacen.registrarCobroTienda(2, "2026-10-21", "10", new Array(100).join("x"), HOY); }));
+      prueba("TP15", "Tras los 7 rechazos no se guardó ningún cobro más", n0, Almacen.obtenerCobrosTiendas().length);
+      Almacen.registrarCobroTienda(3, "2026-10-21", "44", "", HOY);
+      prueba("TP16", "El cobro de la Tienda 3 no afecta a la Tienda 2", 328, Almacen.cuentaDeTienda(2, HOY).cuenta.saldo);
+      prueba("TP17", "Tienda 3: $144 - $44 = $100", 100, Almacen.cuentaDeTienda(3, HOY).cuenta.saldo);
+      Almacen.quitarCobroTienda(2);
+      prueba("TP18", "Quitar el cobro de la Tienda 3 restaura su saldo ($144)", 144, Almacen.cuentaDeTienda(3, HOY).cuenta.saldo);
+      prueba("TP19", "Quitar un cobro que no existe: error", true, lanza(function () { Almacen.quitarCobroTienda(99); }));
+      Almacen.registrarCobroTienda(3, "2026-10-21", "144", "", HOY);
+      prueba("TP20", "Cobrar exactamente el saldo lo deja en 0", 0, Almacen.cuentaDeTienda(3, HOY).cuenta.saldo);
+      prueba("TP21", "…y ya no cobra más (sin saldo)", true, lanza(function () { Almacen.registrarCobroTienda(3, "2026-10-21", "1", "", HOY); }));
+      prueba("TP22", "Los cobros de una tienda se listan del más reciente al más antiguo", 1, Almacen.cuentaDeTienda(2, HOY).cobros.length);
+
+      // ================= REABRIR UN REPARTO =================
+      mem = armarCaso();
+      Almacen.registrarCobroTienda(2, "2026-10-21", "500", "", HOY);
+      Almacen.reabrirReparto("2026-10-19");
+      const rr = Almacen.cuentaDeTienda(2, HOY);
+      prueba("RR1", "Al reabrir el reparto del 19/10, ese día deja de contar (solo $360)", 360, rr.cuenta.totalFiado);
+      prueba("RR2", "Como ya se cobró $500, queda saldo a favor de $140", 140, rr.cuenta.aFavor);
+      prueba("RR3", "…y el día reabierto aparece 'por confirmar' (el del 19 y el del 21)", 2, rr.porConfirmar.length);
+      Almacen.cerrarReparto("2026-10-19");
+      prueba("RR4", "Al cerrar otra vez se normaliza ($828 - $500 = $328)", 328, Almacen.cuentaDeTienda(2, HOY).cuenta.saldo);
+      // Cambiar el check de un día ya cerrado: reabrir, cambiar y cerrar
+      Almacen.reabrirReparto("2026-10-20");
+      const r20 = Almacen.obtenerReparto("2026-10-20");
+      r20.lineas[1].cobrar = true; r20.lineas[1].cobrarManual = true;
+      Almacen.guardarReparto(r20); Almacen.cerrarReparto("2026-10-20");
+      prueba("RR5", "Si ese día sí se cobró (check puesto), sale de la cuenta ($468 - $500 = a favor $32)", 32, Almacen.cuentaDeTienda(2, HOY).cuenta.aFavor);
+
+      // ================= TEXTO DEL ESTADO DE CUENTA =================
+      mem = armarCaso();
+      Almacen.registrarCobroTienda(2, "2026-10-21", "500", "efectivo", HOY);
+      const dt = Almacen.cuentaDeTienda(2, HOY);
+      const texto = LogicaCuentas.textoEstadoDeCuenta(dt.tienda.nombre, dt.cuenta, HOY, { tienda: true });
+      prueba("TX1", "Texto: trae el nombre de la tienda", true, texto.indexOf("ESTADO DE CUENTA - Tienda 2") >= 0);
+      prueba("TX2", "Texto: el día 19 con todo su detalle",  true,
+        texto.indexOf("19/10/2026 - Entrega: mañana 25 + extras 5 - devoluciones 3 - fría 1 = 26 kg x $18.00 = $468.00 | debe $468.00") >= 0);
+      prueba("TX3", "Texto: el día 20 suma al saldo", true, texto.indexOf("20/10/2026 - Entrega: mañana 20 + extras 0 - devoluciones 0 - fría 0 = 20 kg x $18.00 = $360.00 | debe $828.00") >= 0);
+      prueba("TX4", "Texto: el pago resta del total", true, texto.indexOf("21/10/2026 - Pago de $500.00 (efectivo) | debe $328.00") >= 0);
+      prueba("TX5", "Texto: usa 'Total sin cobrar' y no 'Total fiado'", true, texto.indexOf("Total sin cobrar: $828.00") >= 0 && texto.indexOf("Total fiado") < 0);
+      prueba("TX6", "Texto: saldo pendiente", true, texto.indexOf("SALDO PENDIENTE: $328.00") >= 0);
+
+      // ================= RESPALDO VERSIÓN 4 =================
+      const resp = Almacen.exportarTodo();
+      const textoResp = JSON.stringify(resp);
+      prueba("BK1", "Respaldo: versión 4", 4, resp.version);
+      prueba("BK2", "Respaldo: trae el cobro de tienda", 1, resp.cobrosTiendas.length);
+      Almacen.usarBackend(new MemoriaFalsa());
+      const res = Almacen.restaurarTodo(JSON.parse(textoResp));
+      prueba("BK3", "Restaurar informa 1 cobro de tienda", 1, res.cobrosTiendas);
+      prueba("BK4", "Restaurar: el saldo de la Tienda 2 vuelve igual ($328)", 328, Almacen.cuentaDeTienda(2, HOY).cuenta.saldo);
+      prueba("BK5", "Restaurar: el cobro conserva su nota", "efectivo", Almacen.obtenerCobrosTiendas()[0].nota);
+      prueba("BK6", "Restaurar: la Tienda 2 sigue siendo de cobro quincenal", true, Almacen.obtenerTiendas()[1].cobroQuincenal);
+
+      const v3 = JSON.parse(textoResp); v3.version = 3; delete v3.cobrosTiendas;
+      Almacen.restaurarTodo(v3);
+      prueba("BK7", "Respaldo v3 (anterior a los cobros de tiendas): se restaura", 828, Almacen.cuentaDeTienda(2, HOY).cuenta.saldo);
+      prueba("BK8", "…y deja los cobros de tiendas vacíos", 0, Almacen.obtenerCobrosTiendas().length);
+      Almacen.restaurarTodo(JSON.parse(textoResp));
+      Almacen.restaurarTodo({ aplicacion: "tortilleria", version: 1, exportadoEn: "2026-10-01T00:00:00Z", tiendas: Almacen.tiendasDeEjemplo(), repartos: {} });
+      prueba("BK9", "Respaldo v1: deja los cobros de tiendas vacíos", 0, Almacen.obtenerCobrosTiendas().length);
+
+      Almacen.restaurarTodo(JSON.parse(textoResp));
+      const antes = JSON.stringify(Almacen._bk().datos);
+      const malos = [
+        ["BK10", "Rechaza cobro de una tienda que no existe", function (d) { d.cobrosTiendas[0].tiendaId = 99; }],
+        ["BK11", "Rechaza cobro con monto negativo", function (d) { d.cobrosTiendas[0].monto = -5; }],
+        ["BK12", "Rechaza cobro con monto 0", function (d) { d.cobrosTiendas[0].monto = 0; }],
+        ["BK13", "Rechaza cobro con fecha inexistente", function (d) { d.cobrosTiendas[0].fecha = "2026-02-30"; }],
+        ["BK14", "Rechaza dos cobros con el mismo número", function (d) { d.cobrosTiendas.push(clonar(d.cobrosTiendas[0])); }],
+        ["BK15", "Rechaza respaldo v4 sin la lista de cobros de tiendas", function (d) { delete d.cobrosTiendas; }],
+        ["BK16", "Rechaza cobro con monto como texto", function (d) { d.cobrosTiendas[0].monto = "500"; }],
+        ["BK17", "Rechaza cobro con nota ilegible", function (d) { d.cobrosTiendas[0].nota = { x: 1 }; }]
+      ];
+      malos.forEach(function (x) {
+        const copia = JSON.parse(textoResp);
+        x[2](copia);
+        prueba(x[0], x[1], true, lanza(function () { Almacen.restaurarTodo(copia); }));
+      });
+      prueba("BK18", "Tras los 8 rechazos, los datos siguen idénticos", antes, JSON.stringify(Almacen._bk().datos));
+
+      const contador = new MemoriaFalsa();
+      Almacen.usarBackend(contador);
+      contador.escrituras = 0;
+      Almacen.restaurarTodo(JSON.parse(textoResp));
+      const frag = new MemoriaQueFallaEn(contador.escrituras);
+      Almacen.usarBackend(frag);
+      Almacen.agregarPersona("Otra", 12);
+      const foto = JSON.stringify(frag.datos);
+      frag.activarFallo = true;
+      const msg = mensaje(function () { Almacen.restaurarTodo(JSON.parse(textoResp)); });
+      frag.activarFallo = false;
+      prueba("BK19", "Fallo en la última escritura: avisa que los datos quedaron intactos", true, msg.indexOf("intactos") >= 0);
+      prueba("BK20", "Fallo en la última escritura: se deshace todo", foto, JSON.stringify(frag.datos));
+
+      // ================= EXPORTACIONES =================
+      mem = armarCaso();
+      Almacen.registrarCobroTienda(2, "2026-10-21", "500", "efectivo", HOY);
+      const csvC = Almacen.aCSVCobrosTiendas().replace("\uFEFF", "").trim().split("\r\n");
+      prueba("CS1", "CSV de cobros de tiendas: encabezado", "fecha,tienda_id,tienda,monto,nota", csvC[0]);
+      prueba("CS2", "CSV de cobros de tiendas: el cobro", "2026-10-21,2,Tienda 2,500,efectivo", csvC[1]);
+      const csvS = Almacen.aCSVSaldosTiendas(HOY).replace("\uFEFF", "").trim().split("\r\n");
+      prueba("CS3", "CSV de saldos de tiendas: encabezado", "tienda_id,tienda,activa,cobro_quincenal,total_sin_cobrar,total_cobrado,saldo,dias_antiguedad,segmento,sin_cobrar_pendiente_mas_antiguo", csvS[0]);
+      prueba("CS4", "CSV de saldos: Tienda 2 ($828, pagó $500, debe $328; lo pendiente más antiguo es del 20/10)", "2,Tienda 2,si,si,828,500,328,1,Hasta 7 días,2026-10-20", csvS[1]);
+      prueba("CS5", "CSV de saldos: Tienda 3 ($144 sin cobrar)", "3,Tienda 3,si,no,144,0,144,1,Hasta 7 días,2026-10-20", csvS[2]);
+      prueba("CS6", "CSV: empieza con marca UTF-8", true, Almacen.aCSVSaldosTiendas(HOY).charCodeAt(0) === 0xFEFF);
+
+      // ================= EMPEZAR CON DATOS REALES =================
+      const borrados = Almacen.borrarHistorial();
+      prueba("BH1", "Borrar historial: también quita los cobros de tiendas", 0, Almacen.obtenerCobrosTiendas().length);
+      prueba("BH2", "Borrar historial: ya no hay repartos", 0, Almacen.listarFechas().length);
+      prueba("BH3", "Borrar historial: se conservan las tiendas (y su cobro quincenal)", true, Almacen.obtenerTiendas()[1].cobroQuincenal);
+      prueba("BH4", "Borrar historial: cuenta de una tienda queda en 0", 0, Almacen.cuentaDeTienda(2, HOY).cuenta.saldo);
+      prueba("BH5", "Borrar historial: devuelve cuántos registros quitó (3 repartos + 1 cobro = 4)", 4, borrados);
+
+      Almacen.usarBackend(null);
+      return RESULTADOS.slice();
+    }
+    // ===== MARCA-FIN-PRUEBAS =====
+
+    const resultados = ejecutarPruebasTiendasCuentas();
+    const filas = document.getElementById("filas");
+    let correctas = 0;
+    resultados.forEach(function (r) {
+      if (r.ok) correctas += 1;
+      const tr = document.createElement("tr");
+      tr.className = r.ok ? "ok" : "falla";
+      [r.id, r.descripcion, String(r.esperado).slice(0, 70), String(r.obtenido).slice(0, 70), r.ok ? "OK" : "FALLA"].forEach(function (texto) {
+        const td = document.createElement("td");
+        td.textContent = texto;
+        tr.appendChild(td);
+      });
+      filas.appendChild(tr);
+    });
+    const resumen = document.getElementById("resumen");
+    resumen.textContent = correctas + " de " + resultados.length + " pruebas correctas";
+    resumen.className = correctas === resultados.length ? "bien" : "mal";
+  </script>
+</body>
+</html>
